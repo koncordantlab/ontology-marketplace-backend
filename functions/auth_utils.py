@@ -30,8 +30,16 @@ def initialize_firebase():
         # Prefer explicit service account if provided
         cred = None
         sa_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        sa_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+        
         try:
-            if sa_path and os.path.exists(sa_path):
+            if sa_json:
+                # Parse stringified JSON credentials
+                import json
+                sa_data = json.loads(sa_json)
+                cred = credentials.Certificate(sa_data)
+            elif sa_path and os.path.exists(sa_path):
+                # Use file path credentials
                 cred = credentials.Certificate(sa_path)
             else:
                 cred = credentials.ApplicationDefault()
@@ -48,16 +56,19 @@ def initialize_firebase():
         else:
             raise RuntimeError(
                 "Firebase project ID is required. Set GOOGLE_CLOUD_PROJECT, GCP_PROJECT, or "
-                "FIREBASE_PROJECT_ID, or provide GOOGLE_APPLICATION_CREDENTIALS to a service "
-                "account JSON."
+                "FIREBASE_PROJECT_ID, or provide GOOGLE_APPLICATION_CREDENTIALS (file path) or "
+                "GOOGLE_APPLICATION_CREDENTIALS_JSON (stringified JSON) for service account credentials."
             )
 
         global _firebase_init_logged
         if not _firebase_init_logged:
             emulator = os.getenv('FIREBASE_AUTH_EMULATOR_HOST')
             logger.info(
-                "Initialized Firebase Admin SDK | project_id=%s | using_sa=%s | emulator=%s",
-                project_id or "<unset>", bool(sa_path and os.path.exists(sa_path)), emulator or "<none>"
+                "Initialized Firebase Admin SDK | project_id=%s | using_sa=%s | sa_type=%s | emulator=%s",
+                project_id or "<unset>", 
+                bool(sa_json or (sa_path and os.path.exists(sa_path))),
+                "json" if sa_json else ("file" if sa_path and os.path.exists(sa_path) else "default"),
+                emulator or "<none>"
             )
             _firebase_init_logged = True
 
