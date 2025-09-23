@@ -36,8 +36,19 @@ echo "ID Token: $ID_TOKEN"
 
 In the interactive docs, click on the "Authorize" button. In the dialog box, enter in the ID_TOKEN directly in the value field (do not prefix with Bearer).
 
+## Environment Variables
+
+### Required for Firebase Authentication
+- `GOOGLE_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT`, `FIREBASE_PROJECT_ID`, `PROJECT_ID`): Firebase project ID
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON`: Stringified JSON of Firebase service account credentials
+
+### Optional
+- `CORS_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS (default: "*")
+  - Example: `"https://yourdomain.com,https://www.yourdomain.com,http://localhost:3000"`
+  - Use `"*"` to allow all origins (not recommended for production)
+
 ## Running in Leapcell
 
 Entire repo can be referenced and run by Leapcell. Note all the .env variables need to be added, with one extra:
 
-- GOOLGE_APPLICATION_CREDENTIALS_JSON : <stringified version of the service account .json from firebases console>
+- GOOGLE_APPLICATION_CREDENTIALS_JSON : <stringified version of the service account .json from firebases console>

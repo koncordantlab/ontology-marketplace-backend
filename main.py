@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from functions.search_ontologies import search_ontologies
@@ -15,6 +16,24 @@ import os
 initialize_firebase()
 
 app = FastAPI(title="Ontology Marketplace API")
+
+# Configure CORS origins from environment variable
+cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '*')
+if cors_origins_env == '*':
+    cors_origins = ["*"]
+else:
+    # Split by comma and strip whitespace for multiple origins
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(',')]
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all HTTP methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 security = HTTPBearer()
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -31,6 +50,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail=f"Authentication failed: {str(e)}",  # Include error in response
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle preflight OPTIONS requests for CORS"""
+    return {"message": "OK"}
 
 @app.get("/test-auth")
 async def test_auth(current_user: dict = Depends(get_current_user)):
