@@ -43,11 +43,21 @@ def search_ontologies(
 
             # Construct base query
             if search_term:
+# For direct testing
+# MATCH (o:Ontology)
+# WHERE (o.is_public = true OR 
+#         EXISTS((:User {email: "jalakoo@gmail.com"})-[:CREATED]->(o)))
+# AND (o.name CONTAINS "" 
+#         OR o.description CONTAINS "")
+# RETURN o
+# ORDER BY o.created_at DESC
+# SKIP 0
+# LIMIT 100
                 query = """
                 MATCH (o:Ontology)
                 WHERE (o.is_public = true OR 
                         EXISTS((:User {email: $email})-[:CREATED]->(o)))
-                AND (o.title CONTAINS $search_term 
+                AND (o.name CONTAINS $search_term 
                         OR o.description CONTAINS $search_term)
                 RETURN o
                 ORDER BY o.created_at DESC
@@ -61,6 +71,14 @@ def search_ontologies(
                     'limit': limit
                 }
             else:
+# For direct testing
+# MATCH (o:Ontology)
+# WHERE o.is_public = true 
+#     OR EXISTS((:User {email: "jalakoo@gmail.com"})-[:CREATED]->(o))
+# RETURN o
+# ORDER BY o.created_at DESC
+# SKIP 0
+# LIMIT 100
                 query = """
                 MATCH (o:Ontology)
                 WHERE o.is_public = true 
@@ -93,6 +111,7 @@ def search_ontologies(
                         uuid=node['uuid'],
                         name=node['name'],
                         source_url=node['source_url'],
+                        image_url=node.get('image_url'),
                         description=node.get('description'),
                         node_count=node.get('node_count'),
                         score=node.get('score'),
@@ -110,16 +129,33 @@ def search_ontologies(
                     continue
 
             # Get total count for pagination
-            count_query = """
-            MATCH (o:Ontology)
-            WHERE $search_term IS NULL 
-            OR o.title CONTAINS $search_term 
-            OR o.description CONTAINS $search_term
-            RETURN count(o) as total
-            """
+            if search_term:
+                count_query = """
+                MATCH (o:Ontology)
+                WHERE (o.is_public = true OR 
+                        EXISTS((:User {email: $email})-[:CREATED]->(o)))
+                AND (o.name CONTAINS $search_term 
+                        OR o.description CONTAINS $search_term)
+                RETURN count(o) as total
+                """
+                count_params = {
+                    'email': email,
+                    'search_term': search_term
+                }
+            else:
+                count_query = """
+                MATCH (o:Ontology)
+                WHERE o.is_public = true 
+                    OR EXISTS((:User {email: $email})-[:CREATED]->(o))
+                RETURN count(o) as total
+                """
+                count_params = {
+                    'email': email
+                }
+            
             count_result = driver.execute_query(
                 count_query,
-                {'search_term': search_term},
+                count_params,
                 result_transformer_=lambda r: r.single()['total']
             )
 

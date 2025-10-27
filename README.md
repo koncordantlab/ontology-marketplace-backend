@@ -47,6 +47,35 @@ In the interactive docs, click on the "Authorize" button. In the dialog box, ent
   - Example: `"https://yourdomain.com,https://www.yourdomain.com,http://localhost:3000"`
   - Use `"*"` to allow all origins (not recommended for production)
 
+### Local Development Testing
+
+For local frontend testing without Firebase authentication, you can enable a development auth bypass:
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. In your `.env` file, set:
+   ```bash
+   ALLOW_DEV_AUTH_BYPASS=1
+   DEV_AUTH_EMAIL=your-email@example.com
+   ```
+
+3. When making HTTP requests from your frontend, include the `X-Dev-Email` header:
+   ```javascript
+   fetch('http://localhost:8000/search_ontologies', {
+     headers: {
+       'X-Dev-Email': 'your-email@example.com',
+       'Content-Type': 'application/json'
+     }
+   })
+   ```
+
+Alternatively, if you set `DEV_AUTH_EMAIL` in the `.env` file, you don't need to include the header - the backend will automatically use that email.
+
+**Note**: This bypass should NEVER be enabled in production!
+
 ## Running in Leapcell
 
 Entire repo can be referenced and run by Leapcell. Note all the .env variables need to be added, with one extra:

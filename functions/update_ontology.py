@@ -91,6 +91,7 @@ def update_ontology(email: str, ontology_id: str, update_data: UpdateOntology) -
         allowed_fields = {
             'name': str,
             'source_url': str,
+            'image_url': str,
             'description': str,
             'node_count': int,
             'relationship_count': int,
@@ -148,6 +149,7 @@ def update_ontology(email: str, ontology_id: str, update_data: UpdateOntology) -
             uuid=result['o']['uuid'],
             name=result['o']['name'],
             source_url=result['o']['source_url'],
+            image_url=result['o'].get('image_url'),
             description=result['o'].get('description'),
             node_count=result['o'].get('node_count'),
             relationship_count=result['o'].get('relationship_count'),

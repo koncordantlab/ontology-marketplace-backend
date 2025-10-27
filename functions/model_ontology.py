@@ -11,6 +11,7 @@ class OntologyResponse(BaseModel):
 class NewOntology(BaseModel):
     name: str
     source_url: str
+    image_url: str | None = None # Optional thumbnail image URL for the ontology
     description: str | None = None
     node_count: int | None = None
     score: float | None = None
@@ -20,6 +21,7 @@ class NewOntology(BaseModel):
 class UpdateOntology(BaseModel):
     name: str | None = None
     source_url: str | None = None
+    image_url: str | None = None # Optional thumbnail image URL for the ontology
     description: str | None = None
     node_count: int | None = None
     score: float | None = None
@@ -30,6 +32,7 @@ class Ontology(BaseModel):
     uuid: str
     name: str
     source_url: str
+    image_url: str | None = None # Optional thumbnail image URL for the ontology
     description: str | None = None
     node_count: int | None = None
     score: float | None = None

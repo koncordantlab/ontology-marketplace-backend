@@ -83,6 +83,7 @@ def add_ontologies(
             ON CREATE SET 
                 o.name = onto.name,
                 o.source_url = onto.source_url,
+                o.image_url = onto.image_url,
                 o.description = onto.description,
                 o.node_count = onto.node_count,
                 o.relationship_count = onto.relationship_count,

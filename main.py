@@ -11,6 +11,10 @@ from functions.model_ontology import UpdateOntology, Ontology, NewOntology, Onto
 from functions.auth_utils import initialize_firebase
 from firebase_admin import auth
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Initialize Firebase Admin using the proper credential handling
 initialize_firebase()
@@ -36,7 +40,18 @@ app.add_middleware(
 
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    # Development bypass (useful for local testing of endpoints without Firebase)
+    if os.getenv('ALLOW_DEV_AUTH_BYPASS') == '1':
+        dev_email = request.headers.get('X-Dev-Email') or os.getenv('DEV_AUTH_EMAIL')
+        if dev_email:
+            print(f"DEV AUTH BYPASS active, using email={dev_email}")
+            return {
+                'email': dev_email,
+                'email_verified': True,
+                'uid': f'dev-{dev_email}'
+            }
+    
     try:
         token = credentials.credentials
         print(f"Verifying token: {token[:20]}...")  # Log first 20 chars of token
@@ -79,6 +94,7 @@ async def search_ontologies_endpoint(
 
 @app.post("/add_ontologies", response_model=OntologyResponse)
 async def add_ontologies_endpoint(
+    request: Request,
     ontologies: List[NewOntology],
     current_user: dict = Depends(get_current_user)
 ):
@@ -87,7 +103,7 @@ async def add_ontologies_endpoint(
     """
     try:
         ontology_dicts = [onto.model_dump() for onto in ontologies]
-        return add_ontologies(ontology_dicts, email=current_user.get('email'))
+        return add_ontologies(ontology_dicts, email=current_user.get('email'), request=request)
     except Exception as e:
         return {"success": False, "error": str(e)}, 500
 
@@ -140,6 +156,7 @@ async def update_ontology_endpoint(
 
 @app.post("/like_ontology/{ontology_id}", response_model=OntologyResponse)
 async def like_ontology_endpoint(
+    request: Request,
     ontology_id: str,
     current_user: dict = Depends(get_current_user)
 ):
