@@ -12,7 +12,13 @@ from functions.auth_utils import initialize_firebase
 from firebase_admin import auth
 import os
 from dotenv import load_dotenv
-from functions.model_user import can_user_edit_ontology, get_user_uuid_by_fuid, can_user_delete_ontology
+from functions.model_user import (
+    can_user_edit_ontology,
+    get_user_uuid_by_fuid,
+    can_user_delete_ontology,
+    get_user_profile_by_fuid,
+    update_user_is_public_by_fuid,
+)
 from functions.upload_ontology import upload_ontology
 from functions.tags import get_tags as get_all_tags, add_tags as create_tags
 
@@ -314,6 +320,33 @@ async def add_tags_endpoint(
     """
     db = os.getenv('NEO4J_DATABASE', 'neo4j')
     return create_tags(payload.tags, neo4j_database=db)
+
+
+class UpdateUser(BaseModel):
+    is_public: bool
+
+
+@app.get("/get_user")
+async def get_user_endpoint(current_user: dict = Depends(get_current_user)):
+    """
+    Return the current user's public flag and permissions.
+    """
+    fuid = current_user.get('uid')
+    profile = get_user_profile_by_fuid(fuid)
+    return profile
+
+
+@app.put("/update_user")
+async def update_user_endpoint(payload: UpdateUser, current_user: dict = Depends(get_current_user)):
+    """
+    Update the current user's public visibility flag.
+    """
+    fuid = current_user.get('uid')
+    success = update_user_is_public_by_fuid(fuid, payload.is_public)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update user")
+    # Return updated state
+    return get_user_profile_by_fuid(fuid)
 
 if __name__ == "__main__":
     import uvicorn
