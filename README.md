@@ -17,6 +17,43 @@ uv sync
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### Updating requirements.txt with uv
+
+`requirements.txt` is generated from `pyproject.toml` using `uv`. After changing dependencies in `pyproject.toml`, regenerate the lock file with:
+
+```bash
+uv pip compile pyproject.toml -o requirements.txt
+```
+
+Optionally, to upgrade all pinned versions to the latest compatible releases:
+
+```bash
+uv pip compile --upgrade pyproject.toml -o requirements.txt
+```
+
+### Using Python 3.12 with uv (if `uv run python -V` shows 3.13)
+
+If your environment or lock files were created with Python 3.13, recreate them for 3.12:
+
+```bash
+# Ensure Python 3.12 is available to uv
+uv python install 3.12
+
+# Remove any existing virtual environment
+rm -rf .venv
+
+# (Optional) regenerate lock/pins for 3.12
+uv lock --python 3.12 || true
+# Or, if using requirements.txt pins
+uv pip compile --upgrade pyproject.toml -o requirements.txt
+
+# Sync dependencies for Python 3.12
+uv sync --python 3.12
+
+# Verify the version uv will run
+uv run --python 3.12 python -V
+```
+
 Interactive docs will then be available at http://localhost:8000/docs
 
 Getting Firebase Auth Token to test in docs
@@ -75,9 +112,3 @@ For local frontend testing without Firebase authentication, you can enable a dev
 Alternatively, if you set `DEV_AUTH_EMAIL` in the `.env` file, you don't need to include the header - the backend will automatically use that email.
 
 **Note**: This bypass should NEVER be enabled in production!
-
-## Running in Leapcell
-
-Entire repo can be referenced and run by Leapcell. Note all the .env variables need to be added, with one extra:
-
-- GOOGLE_APPLICATION_CREDENTIALS_JSON : <stringified version of the service account .json from firebases console>
