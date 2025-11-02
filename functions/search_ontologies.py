@@ -55,21 +55,18 @@ def search_ontologies(
         with get_neo4j_driver() as driver:
 
             # Construct base query
+            # Build WHERE clause conditionally based on whether fuid is present
+            if fuid:
+                permission_clause = "(o.is_public = true OR EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o)))"
+                permission_params = {'fuid': fuid}
+            else:
+                permission_clause = "o.is_public = true"
+                permission_params = {}
+            
             if search_term:
-# For direct testing
-# MATCH (o:Ontology)
-# WHERE (o.is_public = true OR 
-#         EXISTS((:User {email: "jalakoo@gmail.com"})-[:CREATED]->(o)))
-# AND (o.name CONTAINS "" 
-#         OR o.description CONTAINS "")
-# RETURN o
-# ORDER BY o.created_at DESC
-# SKIP 0
-# LIMIT 100
-                query = """
+                query = f"""
                 MATCH (o:Ontology)
-                WHERE (o.is_public = true OR 
-                        EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o)))
+                WHERE {permission_clause}
                 AND (o.name CONTAINS $search_term 
                         OR o.description CONTAINS $search_term)
                 OPTIONAL MATCH (o)-[:TAGGED]->(t:Tag)
@@ -80,24 +77,15 @@ def search_ontologies(
                 LIMIT $limit
                 """
                 params = {
-                    'fuid': fuid,
+                    **permission_params,
                     'search_term': search_term,
                     'offset': offset,
                     'limit': limit
                 }
             else:
-# For direct testing
-# MATCH (o:Ontology)
-# WHERE o.is_public = true 
-#     OR EXISTS((:User {email: "jalakoo@gmail.com"})-[:CREATED]->(o))
-# RETURN o
-# ORDER BY o.created_at DESC
-# SKIP 0
-# LIMIT 100
-                query = """
+                query = f"""
                 MATCH (o:Ontology)
-                WHERE o.is_public = true 
-                    OR EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o))
+                WHERE {permission_clause}
                 OPTIONAL MATCH (o)-[:TAGGED]->(t:Tag)
                 WITH o, collect(DISTINCT toLower(t.name)) AS tags
                 RETURN o, tags
@@ -106,7 +94,7 @@ def search_ontologies(
                 LIMIT $limit
                 """
                 params = {
-                    'fuid': fuid,
+                    **permission_params,
                     'offset': offset,
                     'limit': limit
                 }
@@ -148,28 +136,34 @@ def search_ontologies(
                     continue
 
             # Get total count for pagination
+            # Use the same permission clause logic
+            if fuid:
+                count_permission_clause = "(o.is_public = true OR EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o)))"
+                count_permission_params = {'fuid': fuid}
+            else:
+                count_permission_clause = "o.is_public = true"
+                count_permission_params = {}
+            
             if search_term:
-                count_query = """
+                count_query = f"""
                 MATCH (o:Ontology)
-                WHERE (o.is_public = true OR 
-                        EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o)))
+                WHERE {count_permission_clause}
                 AND (o.name CONTAINS $search_term 
                         OR o.description CONTAINS $search_term)
                 RETURN count(o) as total
                 """
                 count_params = {
-                    'fuid': fuid,
+                    **count_permission_params,
                     'search_term': search_term
                 }
             else:
-                count_query = """
+                count_query = f"""
                 MATCH (o:Ontology)
-                WHERE o.is_public = true 
-                    OR EXISTS((:User {fuid: $fuid})-[:CREATED|:CAN_EDIT|:CAN_DELETE]->(o))
+                WHERE {count_permission_clause}
                 RETURN count(o) as total
                 """
                 count_params = {
-                    'fuid': fuid
+                    **count_permission_params
                 }
             
             count_result = driver.execute_query(

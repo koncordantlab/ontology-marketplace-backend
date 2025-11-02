@@ -130,11 +130,18 @@ async def add_ontologies_endpoint(
     Add new ontologies to the system
     """
     try:
+        fuid = current_user.get('uid')
+        if not fuid:
+            return OntologyResponse(
+                success=False,
+                message="Missing user ID in authentication token",
+                data=None
+            )
         ontology_dicts = [onto.model_dump() for onto in ontologies]
         return add_ontologies(
             ontology_dicts,
             email=current_user.get('email'),
-            fuid=current_user.get('uid'),
+            fuid=fuid,
             request=request
         )
     except Exception as e:
@@ -154,7 +161,13 @@ async def delete_ontologies_endpoint(
         ontology_ids: List of ontology uuids to delete
     """
     try:
-        fuid=current_user.get('uid')
+        fuid = current_user.get('uid')
+        if not fuid:
+            return OntologyResponse(
+                success=False,
+                message="Missing user ID in authentication token",
+                data=None
+            )
         return delete_ontologies(fuid, ontology_ids)
     except Exception as e:
         return OntologyResponse(
@@ -178,7 +191,13 @@ async def update_ontology_endpoint(
         ontology: UpdateOntology object containing fields to update
     """
     try:
-        fuid=current_user.get('uid')
+        fuid = current_user.get('uid')
+        if not fuid:
+            return OntologyResponse(
+                success=False,
+                message="Missing user ID in authentication token",
+                data=None
+            )
         print(f"Updating ontology {ontology_uuid} for uid {fuid} with data {ontology.model_dump()}")
         return update_ontology(fuid, ontology_uuid, ontology)
     except Exception as e:
