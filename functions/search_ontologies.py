@@ -8,8 +8,10 @@ from .n4j import get_neo4j_driver
 from .auth_utils import get_auth_headers_and_email, verify_firebase_token
 from flask import Request
 from typing import Optional, Tuple, Dict, Any
+from .cache import cache_search_results
 
 
+@cache_search_results
 def search_ontologies(
     search_term: str = None, 
     limit: int = 100, 

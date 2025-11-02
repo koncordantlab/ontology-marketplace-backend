@@ -8,6 +8,7 @@ from .auth_utils import firebase_auth_required, get_authenticated_email, get_aut
 from functools import wraps
 import os
 import logging
+from .cache import invalidate_search_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -133,6 +134,8 @@ def add_ontologies(
                 message = ''
                 if len(result) > 0:
                     message = f'Successfully added {len(result)} ontologies.'
+                    # Invalidate search cache when ontologies are added
+                    invalidate_search_cache()
                 if len(result) < len(ontologies):
                     # Have skipped ontologies
                     message += f' Skipped {len(ontologies) - len(result)} ontologies that already existed.'

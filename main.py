@@ -13,9 +13,7 @@ from firebase_admin import auth
 import os
 from dotenv import load_dotenv
 from functions.model_user import (
-    can_user_edit_ontology,
     get_user_uuid_by_fuid,
-    can_user_delete_ontology,
     get_user_profile_by_fuid,
     update_user_is_public_by_fuid,
 )
@@ -189,74 +187,6 @@ async def update_ontology_endpoint(
             message=f"Failed to process request: {str(e)}",
             data=None
         )
-
-@app.get("/can_edit_ontology/{ontology_uuid}", response_model=OntologyResponse)
-async def can_edit_ontology_endpoint(
-    ontology_uuid: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Check if the user can edit the ontology.
-    
-    Gets the user's Firebase UID from the auth token and queries Neo4j
-    to find their User node with matching fuid, then checks if they have
-    :CREATED or :CAN_EDIT relationships with the ontology.
-    """
-    # Get the Firebase UID from the auth token
-    fuid = current_user.get('uid')
-    
-    if not fuid:
-        return OntologyResponse(
-            success=False,
-            message="User authentication failed - no UID found",
-            data=None
-        )
-    
-    # Get user UUID from Firebase UID, then check edit permissions
-    user_uuid = get_user_uuid_by_fuid(fuid)
-    
-    if not user_uuid:
-        return OntologyResponse(
-            success=False,
-            message="User not found in database",
-            data=None
-        )
-    
-    # Check if user can edit the ontology
-    result = can_user_edit_ontology(user_uuid, ontology_uuid)
-    return OntologyResponse(**result)
-    
-
-@app.get("/can_delete_ontology/{ontology_uuid}", response_model=OntologyResponse)
-async def can_delete_ontology_endpoint(
-    ontology_uuid: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Check if the user can delete the ontology.
-    """
-
-    # current_user.get('uid') is the user's Firebase uid
-    fuid = current_user.get('uid')
-    
-    if not fuid:
-        return OntologyResponse(
-            success=False,
-            message="User authentication failed - no UID found",
-            data=None
-        )
-    user_uuid = get_user_uuid_by_fuid(fuid)
-    
-    if not user_uuid:
-        return OntologyResponse(
-            success=False,
-            message="User not found in database",
-            data=None
-        )
-    
-    # Check if user can edit the ontology
-    result = can_user_delete_ontology(user_uuid, ontology_uuid)
-    return OntologyResponse(**result)
 
 @app.post("/upload_ontology", response_model=OntologyResponse)
 async def upload_ontology_endpoint(

@@ -5,6 +5,7 @@ from .auth_utils import verify_firebase_token
 from datetime import datetime
 from .model_ontology import UpdateOntology,Ontology, OntologyResponse
 from .n4j import get_neo4j_driver
+from .cache import invalidate_search_cache
 
 def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) -> OntologyResponse:
     """
@@ -167,6 +168,9 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
                 )
             except Exception as e:
                 print(f"Tag sync error: {str(e)}")
+        
+        # Invalidate search cache when ontology is updated
+        invalidate_search_cache()
         
         # Convert the Neo4j node to an Ontology object
         created_at = result['o']['created_at']

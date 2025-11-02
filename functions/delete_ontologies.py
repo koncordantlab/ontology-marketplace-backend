@@ -4,6 +4,7 @@ from typing import List
 from .auth_utils import verify_firebase_token
 from .model_ontology import OntologyResponse
 from .n4j import get_neo4j_driver
+from .cache import invalidate_search_cache
 
 def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
     """
@@ -50,6 +51,9 @@ def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
                 message="No ontologies found with the provided IDs for the given user",
                 data={"deleted_count": 0}
             )
+        
+        # Invalidate search cache when ontologies are deleted
+        invalidate_search_cache()
         
         return OntologyResponse(
             success=True,
