@@ -224,6 +224,7 @@ async def upload_ontology_endpoint(
             neo4j_username=ontology.neo4j_username,
             neo4j_password=ontology.neo4j_password,
             neo4j_database=ontology.neo4j_database,
+            root_label=ontology.root_label,
         )
         return OntologyResponse(success=True, message="Upload complete", data=result)
     except Exception as e:
