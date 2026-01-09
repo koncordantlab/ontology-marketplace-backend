@@ -280,6 +280,40 @@ class UpdateUser(BaseModel):
     is_public: bool
 
 
+class TestNeo4jConnection(BaseModel):
+    neo4j_uri: str
+    neo4j_username: str
+    neo4j_password: str
+    neo4j_database: str = "neo4j"
+
+
+@app.post("/test_neo4j_connection")
+async def test_neo4j_connection_endpoint(
+    payload: TestNeo4jConnection,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Test connection to a Neo4j database with provided credentials.
+    """
+    from neo4j import GraphDatabase
+    from neo4j.exceptions import ServiceUnavailable, AuthError
+
+    try:
+        driver = GraphDatabase.driver(
+            payload.neo4j_uri,
+            auth=(payload.neo4j_username, payload.neo4j_password)
+        )
+        driver.verify_connectivity()
+        driver.close()
+        return {"success": True, "message": "Connection successful"}
+    except AuthError:
+        return {"success": False, "message": "Authentication failed"}
+    except ServiceUnavailable:
+        return {"success": False, "message": "Cannot reach database"}
+    except Exception as e:
+        return {"success": False, "message": f"Connection failed: {str(e)}"}
+
+
 @app.get("/get_user")
 async def get_user_endpoint(current_user: dict = Depends(get_current_user)):
     """
