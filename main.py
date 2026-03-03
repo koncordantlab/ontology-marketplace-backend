@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -11,6 +11,7 @@ from functions.model_ontology import UpdateOntology, Ontology, NewOntology, Onto
 from functions.auth_utils import initialize_firebase
 from firebase_admin import auth
 import os
+import tempfile
 from dotenv import load_dotenv
 from functions.model_user import (
     get_user_uuid_by_fuid,
@@ -233,6 +234,79 @@ async def upload_ontology_endpoint(
             message=f"Failed to process request: {str(e)}",
             data=None
         )
+
+@app.post("/upload_ontology_file", response_model=OntologyResponse)
+async def upload_ontology_file_endpoint(
+    request: Request,
+    neo4j_uri: str = Form(...),
+    neo4j_username: str = Form(...),
+    neo4j_password: str = Form(...),
+    neo4j_database: str = Form("neo4j"),
+    source_url: str = Form(""),
+    root_label: str = Form(""),
+    file: UploadFile = File(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Upload an ontology to Neo4j from a file or URL.
+    If a file is provided, it is used as the source.
+    If no file is provided, source_url is used.
+    """
+    tmp_path = None
+    try:
+        source = source_url
+
+        if file and file.filename:
+            ext = os.path.splitext(file.filename)[1].lower()
+            if ext not in ('.owl', '.ttl', '.rdf', '.xml'):
+                return OntologyResponse(
+                    success=False,
+                    message=f"Unsupported file type '{ext}'. Accepted: .owl, .ttl, .rdf, .xml",
+                    data=None,
+                )
+
+            suffix = ext or ".ttl"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+            try:
+                content = await file.read()
+                with os.fdopen(fd, "wb") as tmp:
+                    tmp.write(content)
+            except Exception:
+                os.close(fd)
+                raise
+
+            source = tmp_path
+
+        if not source:
+            return OntologyResponse(
+                success=False,
+                message="Either a file or source_url must be provided",
+                data=None,
+            )
+
+        result = upload_ontology(
+            source=source,
+            ontology_uuid=None,
+            neo4j_uri=neo4j_uri,
+            neo4j_username=neo4j_username,
+            neo4j_password=neo4j_password,
+            neo4j_database=neo4j_database,
+            root_label=root_label if root_label else None,
+        )
+        return OntologyResponse(success=True, message="Upload complete", data=result)
+
+    except Exception as e:
+        return OntologyResponse(
+            success=False,
+            message=f"Failed to process request: {str(e)}",
+            data=None,
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 @app.post("/like_ontology/{ontology_id}", response_model=OntologyResponse)
 async def like_ontology_endpoint(

@@ -158,6 +158,8 @@ python-dotenv==1.2.1
     # via ontology-marketplace-backend (pyproject.toml)
 python-jose==3.5.0
     # via ontology-marketplace-backend (pyproject.toml)
+python-multipart==0.0.22
+    # via ontology-marketplace-backend (pyproject.toml)
 pytz==2025.2
     # via neo4j
 rdflib==7.3.0

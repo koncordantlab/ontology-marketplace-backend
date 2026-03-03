@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.11.4",
     "python-dotenv>=1.1.0",
     "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.9",
     "rdflib>=7.3.0",
     "rdflib-neo4j>=1.1",
     "uvicorn>=0.34.2",

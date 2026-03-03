@@ -17,8 +17,29 @@ def _download_to_tempfile(source: str) -> str:
     """
     parsed = urlparse(source)
     if parsed.scheme in ("http", "https"):
-        response = requests.get(source, timeout=60)
+        try:
+            response = requests.get(source, timeout=60)
+        except requests.exceptions.ConnectionError:
+            raise ValueError(f"Could not connect to URL: {source}")
+        except requests.exceptions.Timeout:
+            raise ValueError(f"Request timed out for URL: {source}")
+
+        if response.status_code == 404:
+            raise ValueError(f"File not found at URL (404): {source}")
+        elif response.status_code == 403:
+            raise ValueError(f"Access denied for URL (403): {source}")
         response.raise_for_status()
+
+        # Check content type - warn if HTML instead of ontology file
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'text/html' in content_type and not any(
+            ext in source.lower() for ext in ('.owl', '.ttl', '.rdf', '.xml')
+        ):
+            raise ValueError(
+                f"URL returned an HTML page instead of an ontology file. "
+                f"The URL may not point directly to a downloadable OWL/TTL file: {source}"
+            )
+
         suffix = os.path.splitext(parsed.path)[1] or ".ttl"
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         with os.fdopen(fd, "wb") as tmp:
