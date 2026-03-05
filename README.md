@@ -11,6 +11,7 @@ FastAPI Server for serving the Ontology Marketplace API.
 - [API Documentation](#api-documentation)
 - [Configuration](#environment-variables)
 - [Development](#development)
+- [Testing](#testing)
 - [Deployment](#deployment)
 - [Caching](#caching)
 - [Contributing](#contributing)
@@ -18,7 +19,7 @@ FastAPI Server for serving the Ontology Marketplace API.
 
 ## Overview
 
-The Ontology Marketplace Backend is a FastAPI-based REST API for managing and searching ontologies stored in Neo4j. It provides authentication via Firebase, supports CRUD operations on ontologies, tag management, and user profile management.
+The Ontology Marketplace Backend is a FastAPI-based REST API for managing and searching ontologies stored in Neo4j. It provides authentication via Firebase, supports CRUD operations on ontologies, tag management, user profile management, and a full community feature set (comments, reactions, flagging, messaging, and activity feeds).
 
 ## Features
 
@@ -30,6 +31,12 @@ The Ontology Marketplace Backend is a FastAPI-based REST API for managing and se
 - ⚡ **Caching**: Built-in caching for improved performance (see [CACHING.md](CACHING.md))
 - 📊 **Neo4j Integration**: Graph database for storing ontologies and relationships
 - 🔄 **RDF Support**: Upload and process RDF/TTL ontology files
+- 💬 **Comments & Replies**: Threaded comments on ontologies with edit window, rate limiting, and soft/hard deletion
+- 👍 **Emoji Reactions**: Toggle reactions on comments with owner moderation
+- 🚩 **Flagging**: User-submitted flags for admin review with duplicate prevention
+- 📨 **Admin Messaging**: Admin-to-user messaging with threaded replies
+- 📋 **Activity Feed**: Unified feed with type filtering, search, and read/unread tracking
+- 🧪 **Test Suite**: 93 tests with coverage tracking and delta reporting
 
 ## Prerequisites
 
@@ -124,6 +131,36 @@ Once the server is running, visit:
 - `GET /get_user` - Get current user profile (requires authentication)
 - `PUT /update_user` - Update user profile (requires authentication)
 - `GET /test-auth` - Test authentication status
+
+#### Comment Operations
+- `GET /ontologies/{ontology_id}/comments` - List comments for an ontology (paginated)
+- `POST /ontologies/{ontology_id}/comments` - Add a comment to an ontology
+- `PUT /comments/{comment_id}` - Edit a comment (author only, within 15-min window)
+- `DELETE /comments/{comment_id}` - Delete a comment (author or ontology owner)
+- `POST /comments/{comment_id}/replies` - Reply to a comment
+- `GET /comments/{comment_id}/replies` - List replies to a comment
+
+#### Reaction Operations
+- `POST /comments/{comment_id}/reactions` - Add/toggle emoji reaction
+- `GET /comments/{comment_id}/reactions` - Get reaction counts
+- `DELETE /comments/{comment_id}/reactions/{emoji}` - Remove own reaction
+- `DELETE /comments/{comment_id}/reactions/by-id/{reaction_id}` - Remove any reaction (ontology owner)
+
+#### Flag Operations
+- `POST /comments/{comment_id}/flag` - Flag a comment or reply for admin review
+
+#### Message Operations
+- `POST /messages` - Send a message to a user (admin only)
+- `GET /messages` - List messages for current user (inbox)
+- `GET /messages/{message_id}` - Get a single message with replies
+- `POST /messages/{message_id}/reply` - Reply to a message (recipient only)
+- `PUT /messages/{message_id}/read` - Mark message as read
+
+#### Activity Feed
+- `GET /users/me/activity` - Get activity feed (paginated, filterable by type, searchable)
+- `GET /users/me/activity/unread-count` - Get unread count for header badge
+- `PUT /users/me/activity/{item_id}/read` - Mark a single item as read
+- `PUT /users/me/activity/read-all` - Mark all items as read
 
 #### Other
 - `POST /like_ontology/{ontology_id}` - Like an ontology (placeholder, requires authentication)
@@ -264,6 +301,56 @@ echo "ID Token: $ID_TOKEN"
 ```
 
 In the interactive docs, click on the "Authorize" button. In the dialog box, enter the ID_TOKEN directly in the value field (do not prefix with Bearer).
+
+## Testing
+
+Run the full test suite with coverage:
+
+```bash
+./tests.sh
+```
+
+This will:
+1. Create a virtual environment if needed
+2. Install test dependencies (pytest, pytest-mock, pytest-cov, httpx)
+3. Run all tests with coverage reporting
+4. Show coverage delta compared to the previous run
+
+Individual test runs:
+
+```bash
+# Activate venv first
+source .venv/bin/activate
+
+# Run all tests
+python -m pytest
+
+# Run a specific test file
+python -m pytest tests/test_comments.py
+
+# Run with verbose output
+python -m pytest -v
+
+# Run with coverage
+python -m pytest --cov --cov-report=term-missing
+```
+
+### Test Structure
+
+```
+tests/
+├── conftest.py                # Shared fixtures (mock Neo4j driver, test clients)
+├── test_model_comment.py      # Comment/reaction model validation
+├── test_model_flag.py         # Flag model validation
+├── test_model_message.py      # Message model validation
+├── test_comments.py           # Comment CRUD service tests
+├── test_comment_endpoints.py  # Comment HTTP endpoint tests
+├── test_reactions.py          # Reaction toggle/remove tests
+├── test_flags.py              # Flag submission and duplicate prevention
+├── test_messages.py           # Messaging service tests
+├── test_activity.py           # Activity feed, unread count, mark read
+└── test_integration.py        # End-to-end workflow tests
+```
 
 ## Deployment
 

@@ -69,3 +69,12 @@ coverage.xml
 
 # Notes
 references.md
+
+# Coverage history
+.coverage_history/
+.coverage
+htmlcov/
+
+# Coverage history
+.coverage_history/
+coverage/

@@ -19,6 +19,17 @@ from functions.model_user import (
 )
 from functions.upload_ontology import upload_ontology
 from functions.tags import get_tags as get_all_tags, add_tags as create_tags
+from functions.comments import (
+    create_comment, get_comments, edit_comment, delete_comment,
+    create_reply, get_replies
+)
+from functions.model_comment import NewComment, NewReply, NewReaction
+from functions.reactions import toggle_reaction, remove_reaction, remove_reaction_by_owner, get_reaction_counts
+from functions.flags import create_flag, check_user_has_flagged
+from functions.model_flag import NewFlag
+from functions.messages import send_message, get_messages, get_message, reply_to_message, mark_message_read
+from functions.model_message import NewMessage, MessageReply
+from functions.activity import get_activity_feed, get_unread_count, mark_read, mark_all_read
 
 # Load environment variables from .env file
 load_dotenv()
@@ -301,6 +312,237 @@ async def update_user_endpoint(payload: UpdateUser, current_user: dict = Depends
         raise HTTPException(status_code=500, detail="Failed to update user")
     # Return updated state
     return get_user_profile_by_fuid(fuid)
+
+# --- Comment Endpoints ---
+
+@app.get("/ontologies/{ontology_id}/comments")
+async def get_comments_endpoint(
+    ontology_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    result = get_comments(ontology_id, limit, offset, current_user.get("uid"))
+    return result
+
+@app.post("/ontologies/{ontology_id}/comments", status_code=201)
+async def create_comment_endpoint(
+    ontology_id: str,
+    comment: NewComment,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    if not fuid:
+        raise HTTPException(status_code=401, detail="Missing user ID")
+    result = create_comment(ontology_id, comment.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/comments/{comment_id}")
+async def edit_comment_endpoint(
+    comment_id: str,
+    comment: NewComment,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = edit_comment(comment_id, comment.content, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}")
+async def delete_comment_endpoint(
+    comment_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = delete_comment(comment_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.post("/comments/{comment_id}/replies", status_code=201)
+async def create_reply_endpoint(
+    comment_id: str,
+    reply: NewReply,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = create_reply(comment_id, reply.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/comments/{comment_id}/replies")
+async def get_replies_endpoint(
+    comment_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    result = get_replies(comment_id, limit, offset)
+    return result
+
+# --- Reaction Endpoints ---
+
+@app.post("/comments/{comment_id}/reactions", status_code=201)
+async def toggle_reaction_endpoint(
+    comment_id: str,
+    reaction: NewReaction,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = toggle_reaction(comment_id, reaction.emoji, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}/reactions/{emoji}")
+async def remove_reaction_endpoint(
+    comment_id: str,
+    emoji: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = remove_reaction(comment_id, emoji, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}/reactions/by-id/{reaction_id}")
+async def remove_reaction_by_owner_endpoint(
+    comment_id: str,
+    reaction_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = remove_reaction_by_owner(comment_id, reaction_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/comments/{comment_id}/reactions")
+async def get_reaction_counts_endpoint(
+    comment_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return get_reaction_counts(comment_id, fuid)
+
+# --- Flag Endpoints ---
+
+@app.post("/comments/{comment_id}/flag", status_code=201)
+async def flag_comment_endpoint(
+    comment_id: str,
+    flag: NewFlag,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = create_flag(comment_id, flag.reason, flag.details, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+# --- Message Endpoints ---
+
+@app.post("/messages", status_code=201)
+async def send_message_endpoint(
+    message: NewMessage,
+    current_user: dict = Depends(get_current_user)
+):
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only admins can send messages")
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = send_message(message.recipient_fuid, message.subject, message.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/messages")
+async def get_messages_endpoint(
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return get_messages(fuid, limit, offset)
+
+@app.get("/messages/{message_id}")
+async def get_message_endpoint(
+    message_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = get_message(message_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.post("/messages/{message_id}/reply", status_code=201)
+async def reply_to_message_endpoint(
+    message_id: str,
+    reply: MessageReply,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = reply_to_message(message_id, reply.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/messages/{message_id}/read")
+async def mark_message_read_endpoint(
+    message_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = mark_message_read(message_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+# --- Activity Feed Endpoints ---
+
+@app.get("/users/me/activity")
+async def get_activity_endpoint(
+    limit: int = 20,
+    offset: int = 0,
+    type: str = None,
+    search: str = None,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return get_activity_feed(fuid, limit, offset, type, search)
+
+@app.get("/users/me/activity/unread-count")
+async def get_unread_count_endpoint(
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return get_unread_count(fuid)
+
+@app.put("/users/me/activity/{item_id}/read")
+async def mark_read_endpoint(
+    item_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = mark_read(item_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/users/me/activity/read-all")
+async def mark_all_read_endpoint(
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return mark_all_read(fuid)
 
 if __name__ == "__main__":
     import uvicorn

@@ -16,3 +16,15 @@ dependencies = [
     "rdflib-neo4j>=1.1",
     "uvicorn>=0.34.2",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["functions", "main"]
+omit = ["tests/*", ".venv/*"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+skip_empty = true
