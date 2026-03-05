@@ -1,13 +1,13 @@
-from typing import Tuple, Optional
+import re
+from typing import Optional
 from urllib.parse import urlparse
 import tempfile
 import os
+from collections import defaultdict
 
-from neo4j import Driver, GraphDatabase
-import rdflib
+from rdflib import Graph, RDFS, URIRef
+from neo4j import GraphDatabase
 import requests
-
-from .n4j import get_neo4j_driver
 
 
 def _download_to_tempfile(source: str) -> str:
@@ -17,8 +17,29 @@ def _download_to_tempfile(source: str) -> str:
     """
     parsed = urlparse(source)
     if parsed.scheme in ("http", "https"):
-        response = requests.get(source, timeout=60)
+        try:
+            response = requests.get(source, timeout=60)
+        except requests.exceptions.ConnectionError:
+            raise ValueError(f"Could not connect to URL: {source}")
+        except requests.exceptions.Timeout:
+            raise ValueError(f"Request timed out for URL: {source}")
+
+        if response.status_code == 404:
+            raise ValueError(f"File not found at URL (404): {source}")
+        elif response.status_code == 403:
+            raise ValueError(f"Access denied for URL (403): {source}")
         response.raise_for_status()
+
+        # Check content type - warn if HTML instead of ontology file
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'text/html' in content_type and not any(
+            ext in source.lower() for ext in ('.owl', '.ttl', '.rdf', '.xml')
+        ):
+            raise ValueError(
+                f"URL returned an HTML page instead of an ontology file. "
+                f"The URL may not point directly to a downloadable OWL/TTL file: {source}"
+            )
+
         suffix = os.path.splitext(parsed.path)[1] or ".ttl"
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         with os.fdopen(fd, "wb") as tmp:
@@ -27,121 +48,125 @@ def _download_to_tempfile(source: str) -> str:
     return source
 
 
-def _ensure_indexes(driver: Driver, database: Optional[str] = None) -> None:
-    """
-    Create minimal indexes/constraints used by the ingest. Idempotent.
-    """
-    statements = [
-        # Resource nodes indexed by uri for faster MERGE
-        "CREATE INDEX resource_uri IF NOT EXISTS FOR (n:Resource) ON (n.uri)",
-        # Ontology node index by uuid (if used for tracking)
-        "CREATE INDEX ontology_uuid IF NOT EXISTS FOR (o:Ontology) ON (o.uuid)",
-    ]
-    with driver.session(database=database) as session:
-        for stmt in statements:
-            session.run(stmt)
+def convert_owl_to_ttl(input_path: str) -> str:
+    """Convert OWL file to TTL format."""
+    g = Graph()
+    g.parse(input_path, format="xml")
+    temp_ttl = tempfile.NamedTemporaryFile(delete=False, suffix=".ttl")
+    g.serialize(destination=temp_ttl.name, format="turtle")
+    return temp_ttl.name
 
 
-def _ingest_graph(driver: Driver, graph: rdflib.Graph, database: Optional[str] = None) -> Tuple[int, int]:
-    """
-    Ingest an RDFLib graph into Neo4j.
-    - Creates/merges `Resource {uri}` nodes for subjects/objects that are URIs
-    - For object triples (object is URI): creates relationships with `type` equal to predicate IRI
-    - For literal triples: sets a property on the subject node keyed by a safe property name derived from predicate
-
-    Returns tuple: (num_nodes_touched, num_relationships_created)
-    """
-    # We'll batch relationships by predicate to reduce query churn
-    object_triples_by_pred = {}
-    literal_triples_by_pred = {}
-
-    for subj, pred, obj in graph:
-        subj_str = str(subj)
-        pred_str = str(pred)
-        if isinstance(obj, rdflib.term.URIRef):
-            obj_str = str(obj)
-            object_triples_by_pred.setdefault(pred_str, []).append((subj_str, obj_str))
-        else:
-            # Literal property; store value as string for now
-            literal_triples_by_pred.setdefault(pred_str, []).append((subj_str, str(obj)))
-
-    total_nodes = 0
-    total_rels = 0
-
-    with driver.session(database=database) as session:
-        # Ensure base indexes
-        _ensure_indexes(driver, database)
-
-        # Upsert subjects/objects for object triples in batches per predicate
-        for pred_iri, pairs in object_triples_by_pred.items():
-            # Use UNWIND for batching
-            cypher = (
-                "UNWIND $rows AS row "
-                "MERGE (s:Resource {uri: row.subj}) "
-                "MERGE (o:Resource {uri: row.obj}) "
-                "MERGE (s)-[r:RELATION {type: $pred}]->(o) "
-                "RETURN count(distinct s)+count(distinct o) as nodes, count(r) as rels"
-            )
-            result = session.run(cypher, rows=[{"subj": s, "obj": o} for s, o in pairs], pred=pred_iri)
-            record = result.single()
-            if record:
-                total_nodes += record["nodes"]
-                total_rels += record["rels"]
-
-        # Handle literal properties: set properties on subject nodes
-        for pred_iri, pairs in literal_triples_by_pred.items():
-            # Create a safe property key from predicate IRI
-            # Keep a short, consistent property name; fallback to full IRI hashed if needed
-            key = _predicate_to_property_key(pred_iri)
-            cypher = (
-                "UNWIND $rows AS row "
-                "MERGE (s:Resource {uri: row.subj}) "
-                "SET s[$key] = row.val "
-                "RETURN count(distinct s) as nodes"
-            )
-            result = session.run(cypher, rows=[{"subj": s, "val": v} for s, v in pairs], key=key)
-            record = result.single()
-            if record:
-                total_nodes += record["nodes"]
-
-    return total_nodes, total_rels
+def sanitize_label(label: str) -> str:
+    """Sanitize label for Neo4j node labels."""
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '', label.replace(" ", "_").replace("-", "_"))
+    if re.match(r'^\d', sanitized):
+        sanitized = "L_" + sanitized
+    return sanitized or "Unknown"
 
 
-def _predicate_to_property_key(predicate_iri: str) -> str:
-    """
-    Convert a predicate IRI into a safe Neo4j property key.
-    Strategy: use fragment or last path segment, with non-alphanumerics replaced by underscores.
-    """
-    frag = predicate_iri.rsplit("#", 1)[-1]
-    frag = frag.rsplit("/", 1)[-1]
-    safe = []
-    for ch in frag:
-        if ch.isalnum():
-            safe.append(ch)
-        else:
-            safe.append("_")
-    candidate = "".join(safe)
-    # Ensure it starts with a letter per best practice
-    if candidate and candidate[0].isdigit():
-        candidate = f"p_{candidate}"
-    return candidate or "prop"
+def extract_fragment(uri: str) -> str:
+    """Extracts the last part of a URI (after # or /)"""
+    if "#" in uri:
+        return uri.split("#")[-1]
+    return uri.rstrip("/").split("/")[-1]
 
 
-def _update_ontology_counts(driver: Driver, ontology_uuid: str, nodes: int, rels: int, database: Optional[str] = None) -> None:
-    """Update counts on an existing Ontology node by uuid."""
-    with driver.session(database=database) as session:
-        session.run(
-            """
-            MATCH (o:Ontology {uuid: $uuid})
-            SET o.node_count = $nodes,
-                o.relationship_count = $rels,
-                o.updated_time = datetime()
-            RETURN o
-            """,
-            uuid=ontology_uuid,
-            nodes=int(nodes),
-            rels=int(rels),
-        )
+def parse_ttl_to_json(ttl_path: str, root_label: Optional[str] = None) -> list:
+    """Parse TTL file to JSON tree structure."""
+    g = Graph()
+    g.parse(ttl_path, format="ttl")
+
+    children = defaultdict(list)
+    labels = {}
+    parents = set()
+    all_classes = set()
+
+    for s, p, o in g:
+        if p == RDFS.label:
+            labels[s] = str(o)
+        elif p == RDFS.subClassOf and isinstance(o, URIRef):
+            children[o].append(s)
+            parents.add(s)
+            all_classes.add(s)
+            all_classes.add(o)
+
+    # Ensure every class has a label (fall back to fragment)
+    for cls in all_classes:
+        if cls not in labels:
+            labels[cls] = extract_fragment(str(cls))
+
+    # Filter top-level roots: those that are not children
+    if root_label:
+        def get_uri_by_label(search_label):
+            for uri, label in labels.items():
+                if label.lower() == search_label.lower():
+                    return uri
+            return None
+
+        root_uri = get_uri_by_label(root_label)
+        if not root_uri:
+            raise ValueError(f"Root label '{root_label}' not found in TTL file.")
+        roots = [root_uri]
+    else:
+        roots = [cls for cls in all_classes if cls not in parents]
+
+    def build_json_tree(node):
+        return {
+            "id": str(node),
+            "label": labels.get(node, extract_fragment(str(node))),
+            "children": [build_json_tree(child) for child in children.get(node, [])]
+        }
+
+    return [build_json_tree(r) for r in roots]
+
+
+def count_nodes(node: dict, children_field: str) -> int:
+    """Count total nodes in tree."""
+    count = 1
+    for child in node.get(children_field, []):
+        count += count_nodes(child, children_field)
+    return count
+
+
+def upload_node(tx, node_id: str, label: str, assigned_label: str):
+    """Upload a single node to Neo4j."""
+    tx.run(f"""
+        MERGE (n:{assigned_label} {{id: $id}})
+        SET n.name = $label
+    """, id=node_id, label=label)
+
+
+def create_relationship(tx, parent_id: str, child_id: str):
+    """Create SUBCLASS_OF relationship between nodes."""
+    tx.run("""
+        MATCH (p {id: $parent_id})
+        MATCH (c {id: $child_id})
+        MERGE (c)-[:SUBCLASS_OF]->(p)
+    """, parent_id=parent_id, child_id=child_id)
+
+
+def traverse_and_upload(tx, root_node: dict, id_field: str, label_field: str, children_field: str, counters: dict):
+    """Traverse tree and upload nodes to Neo4j."""
+    def recurse(node, parent_id=None, parent_label=None, level=0):
+        node_id = node.get(id_field)
+        raw_label = node.get(label_field, node_id)
+        children = node.get(children_field, [])
+
+        current_label = sanitize_label(raw_label)
+        assigned_label = current_label if level <= 1 else parent_label
+
+        if node_id:
+            upload_node(tx, node_id, raw_label, assigned_label)
+            counters['nodes'] += 1
+            if parent_id:
+                create_relationship(tx, parent_id, node_id)
+                counters['relationships'] += 1
+
+            for child in children:
+                recurse(child, parent_id=node_id, parent_label=assigned_label, level=level+1)
+
+    recurse(root_node)
 
 
 def upload_ontology(
@@ -151,47 +176,72 @@ def upload_ontology(
     neo4j_username: Optional[str] = None,
     neo4j_password: Optional[str] = None,
     neo4j_database: Optional[str] = None,
+    root_label: Optional[str] = None,
 ) -> dict:
     """
-    Load a TTL file from a URL or local path into Neo4j, similar to the referenced Cloud Function.
+    Load a TTL/OWL file from a URL or local path into Neo4j.
 
     Args:
-        source: HTTP(S) URL or filesystem path to a TTL file.
-        ontology_uuid: Optional Ontology uuid to update counts on after ingest.
+        source: HTTP(S) URL or filesystem path to a TTL/OWL file.
+        ontology_uuid: Optional Ontology uuid (not used currently).
+        neo4j_uri: Neo4j connection URI.
+        neo4j_username: Neo4j username.
+        neo4j_password: Neo4j password.
+        neo4j_database: Neo4j database name.
+        root_label: Optional root label to start tree from.
 
     Returns:
         Dict with counts: {"nodes": int, "relationships": int}
     """
     local_path: Optional[str] = None
-    try:
-        local_path = _download_to_tempfile(source)
-        graph = rdflib.Graph()
-        graph.parse(local_path, format="turtle")
+    converted_path: Optional[str] = None
 
-        # Choose connection: explicit parameters override env-configured driver
-        if neo4j_uri and neo4j_username and neo4j_password:
-            driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_username, neo4j_password))
-            manage_driver = True
+    try:
+        # Download if URL
+        local_path = _download_to_tempfile(source)
+
+        # Convert OWL to TTL if needed
+        if local_path.endswith(".owl"):
+            converted_path = convert_owl_to_ttl(local_path)
+            ttl_path = converted_path
         else:
-            driver = get_neo4j_driver()
-            manage_driver = True
+            ttl_path = local_path
+
+        # Parse TTL to JSON tree
+        json_data = parse_ttl_to_json(ttl_path, root_label=root_label)
+
+        if not json_data:
+            return {"nodes": 0, "relationships": 0, "message": "No data found in ontology file"}
+
+        # Connect to Neo4j
+        if not neo4j_uri or not neo4j_username or not neo4j_password:
+            raise ValueError("Neo4j credentials are required")
+
+        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_username, neo4j_password))
+
+        counters = {'nodes': 0, 'relationships': 0}
 
         try:
-            nodes, rels = _ingest_graph(driver, graph, database=neo4j_database)
-            if ontology_uuid:
-                _update_ontology_counts(driver, ontology_uuid, nodes, rels, database=neo4j_database)
-        finally:
-            # Close explicit driver or env driver context
-            try:
-                driver.close()
-            except Exception:
-                pass
+            def upload_all(tx):
+                for tree in json_data:
+                    traverse_and_upload(tx, tree, "id", "label", "children", counters)
 
-        return {"nodes": int(nodes), "relationships": int(rels)}
+            with driver.session(database=neo4j_database) as session:
+                session.execute_write(upload_all)
+        finally:
+            driver.close()
+
+        return {"nodes": counters['nodes'], "relationships": counters['relationships']}
+
     finally:
-        # Clean up temp file if we downloaded it
+        # Clean up temp files
         if local_path and local_path != source and os.path.exists(local_path):
             try:
                 os.remove(local_path)
+            except OSError:
+                pass
+        if converted_path and os.path.exists(converted_path):
+            try:
+                os.remove(converted_path)
             except OSError:
                 pass

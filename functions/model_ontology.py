@@ -83,3 +83,4 @@ class UploadOntology(BaseModel):
     neo4j_password: str
     neo4j_database: str = "neo4j"
     source_url: str
+    root_label: Optional[str] = None
