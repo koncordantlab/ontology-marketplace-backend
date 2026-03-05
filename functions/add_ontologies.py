@@ -129,7 +129,6 @@ def add_ontologies(
                     result_transformer_=lambda r: [dict(record) for record in r]
                 )
         
-                print(f'Ontologies added: {result}')
                     
                 message = ''
                 if len(result) > 0:
@@ -152,7 +151,7 @@ def add_ontologies(
                 return OntologyResponse(**response_data)
                         
         except Exception as e:
-            print(f"Database error: {str(e)}")
+            logging.error(f"Database error: {str(e)}")
             return OntologyResponse(
                 success=False,
                 message='Database operation failed',
@@ -166,7 +165,7 @@ def add_ontologies(
             data=None
         )
     except Exception as e:
-        print(f"Error adding ontologies: {str(e)}")
+        logging.error(f"Error adding ontologies: {str(e)}")
         return OntologyResponse(
             success=False,
             message='Failed to add ontologies',

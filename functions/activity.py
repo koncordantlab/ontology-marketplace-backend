@@ -1,12 +1,13 @@
 from functions.n4j import get_neo4j_driver
+from functions.cache import invalidate_unread_cache, invalidate_activity_cache
 from datetime import datetime, timezone
 
 
-def get_activity_feed(user_fuid: str, limit: int = 20, offset: int = 0,
+async def get_activity_feed(user_fuid: str, limit: int = 20, offset: int = 0,
                       type_filter: str = None, search: str = None) -> dict:
     """Get unified activity feed for a user (comments, replies, reactions, messages)."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Build UNION query for all activity types
         where_clauses = []
         params = {"fuid": user_fuid, "limit": limit, "offset": offset}
@@ -59,16 +60,16 @@ def get_activity_feed(user_fuid: str, limit: int = 20, offset: int = 0,
 
         union_query = " UNION ALL ".join(queries)
         full_query = (
-            f"CALL {{ {union_query} }} "
+            f"CALL () {{ {union_query} }} "
             f"WITH id, type, created_at, content, subject, ontology_name, ontology_id, is_read "
             f"ORDER BY created_at DESC "
             f"SKIP $offset LIMIT $limit "
             f"RETURN id, type, created_at, content, subject, ontology_name, ontology_id, is_read"
         )
 
-        result = session.run(full_query, **params)
+        result = await session.run(full_query, **params)
         items = []
-        for record in result:
+        async for record in result:
             items.append({
                 "id": record["id"],
                 "type": record["type"],
@@ -83,56 +84,63 @@ def get_activity_feed(user_fuid: str, limit: int = 20, offset: int = 0,
         return {"success": True, "data": {"items": items}}
 
 
-def get_unread_count(user_fuid: str) -> dict:
+async def get_unread_count(user_fuid: str) -> dict:
     """Get count of unread activity items."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Count unread messages
-        result = session.run(
+        result = await session.run(
             "MATCH (m:Message)-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "WHERE m.is_read = false "
             "RETURN count(m) AS count",
             fuid=user_fuid
         )
-        count = result.single()["count"]
+        record = await result.single()
+        count = record["count"]
         return {"success": True, "data": {"count": count}}
 
 
-def mark_read(item_id: str, user_fuid: str) -> dict:
+async def mark_read(item_id: str, user_fuid: str) -> dict:
     """Mark an activity item as read."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Try marking as message
-        result = session.run(
+        result = await session.run(
             "MATCH (m:Message {uuid: $id})-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "SET m.is_read = true "
             "RETURN m.uuid AS uuid",
             id=item_id, fuid=user_fuid
         )
-        if result.single():
+        if await result.single():
+            invalidate_unread_cache(user_fuid)
+            invalidate_activity_cache(user_fuid)
             return {"success": True, "data": {"id": item_id, "is_read": True}}
 
         # Try marking as comment
-        result = session.run(
+        result = await session.run(
             "MATCH (c:Comment {uuid: $id}) "
             "SET c.is_read = true "
             "RETURN c.uuid AS uuid",
             id=item_id
         )
-        if result.single():
+        if await result.single():
+            invalidate_unread_cache(user_fuid)
+            invalidate_activity_cache(user_fuid)
             return {"success": True, "data": {"id": item_id, "is_read": True}}
 
         return {"success": False, "error": "Item not found", "status": 404}
 
 
-def mark_all_read(user_fuid: str) -> dict:
+async def mark_all_read(user_fuid: str) -> dict:
     """Mark all activity items as read for a user."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
-        session.run(
+    async with driver.session() as session:
+        await session.run(
             "MATCH (m:Message)-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "WHERE m.is_read = false "
             "SET m.is_read = true",
             fuid=user_fuid
         )
+        invalidate_unread_cache(user_fuid)
+        invalidate_activity_cache(user_fuid)
         return {"success": True, "data": {"marked_all_read": True}}

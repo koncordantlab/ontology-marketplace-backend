@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
+from async_helpers import AsyncIteratorFromList
 from functions.reactions import toggle_reaction, remove_reaction, remove_reaction_by_owner, get_reaction_counts
 
 
@@ -7,91 +8,125 @@ from functions.reactions import toggle_reaction, remove_reaction, remove_reactio
 def mock_driver():
     with patch("functions.reactions.get_neo4j_driver") as mock_get:
         driver = MagicMock()
-        session = MagicMock()
-        driver.session.return_value.__enter__ = MagicMock(return_value=session)
-        driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        def make_result(data=None):
+            if data is None:
+                data = []
+            result = AsyncMock(name="neo4j_result")
+            result.single = AsyncMock(return_value=None)
+            result.__aiter__ = lambda self=None, d=data: AsyncIteratorFromList(d)
+            return result
+
+        session = AsyncMock(name="neo4j_session")
+        session.run = AsyncMock(return_value=make_result())
+
+        session_ctx = AsyncMock()
+        session_ctx.__aenter__ = AsyncMock(return_value=session)
+        session_ctx.__aexit__ = AsyncMock(return_value=False)
+        driver.session = MagicMock(return_value=session_ctx)
+
         mock_get.return_value = driver
-        yield session
+
+        driver._session = session
+        driver._make_result = make_result
+
+        yield driver
 
 
 class TestToggleReaction:
-    def test_add_reaction(self, mock_driver):
-        mock_driver.run.side_effect = [
-            MagicMock(single=MagicMock(return_value=None)),  # no existing
-            MagicMock(),  # create
-        ]
-        result = toggle_reaction("c1", "👍", "user-fuid")
+    async def test_add_reaction(self, mock_driver):
+        session = mock_driver._session
+        no_existing = mock_driver._make_result()
+        no_existing.single = AsyncMock(return_value=None)
+        create_result = mock_driver._make_result()
+
+        session.run.side_effect = [no_existing, create_result]
+        result = await toggle_reaction("c1", "\U0001f44d", "user-fuid")
         assert result["success"] is True
         assert result["data"]["action"] == "added"
         assert result["status"] == 201
 
-    def test_remove_existing_reaction(self, mock_driver):
+    async def test_remove_existing_reaction(self, mock_driver):
+        session = mock_driver._session
         existing = MagicMock()
         existing.__getitem__ = lambda self, k: {"uuid": "r1"}[k]
-        mock_driver.run.side_effect = [
-            MagicMock(single=MagicMock(return_value=existing)),  # existing found
-            MagicMock(),  # delete
-        ]
-        result = toggle_reaction("c1", "👍", "user-fuid")
+        found_result = mock_driver._make_result()
+        found_result.single = AsyncMock(return_value=existing)
+        delete_result = mock_driver._make_result()
+
+        session.run.side_effect = [found_result, delete_result]
+        result = await toggle_reaction("c1", "\U0001f44d", "user-fuid")
         assert result["success"] is True
         assert result["data"]["action"] == "removed"
 
-    def test_invalid_emoji(self, mock_driver):
-        result = toggle_reaction("c1", "🤔", "user-fuid")
+    async def test_invalid_emoji(self, mock_driver):
+        result = await toggle_reaction("c1", "\U0001f914", "user-fuid")
         assert result["success"] is False
         assert result["status"] == 400
 
 
 class TestRemoveReaction:
-    def test_remove_own(self, mock_driver):
+    async def test_remove_own(self, mock_driver):
+        session = mock_driver._session
         existing = MagicMock()
         existing.__getitem__ = lambda self, k: {"uuid": "r1"}[k]
-        mock_driver.run.side_effect = [
-            MagicMock(single=MagicMock(return_value=existing)),
-            MagicMock(),
-        ]
-        result = remove_reaction("c1", "👍", "user-fuid")
+        found_result = mock_driver._make_result()
+        found_result.single = AsyncMock(return_value=existing)
+        delete_result = mock_driver._make_result()
+
+        session.run.side_effect = [found_result, delete_result]
+        result = await remove_reaction("c1", "\U0001f44d", "user-fuid")
         assert result["success"] is True
 
-    def test_not_found(self, mock_driver):
-        mock_driver.run.return_value = MagicMock(single=MagicMock(return_value=None))
-        result = remove_reaction("c1", "👍", "user-fuid")
+    async def test_not_found(self, mock_driver):
+        session = mock_driver._session
+        not_found_result = mock_driver._make_result()
+        not_found_result.single = AsyncMock(return_value=None)
+        session.run.return_value = not_found_result
+        result = await remove_reaction("c1", "\U0001f44d", "user-fuid")
         assert result["success"] is False
         assert result["status"] == 404
 
 
 class TestRemoveReactionByOwner:
-    def test_owner_can_remove(self, mock_driver):
+    async def test_owner_can_remove(self, mock_driver):
+        session = mock_driver._session
         auth_record = MagicMock()
         auth_record.__getitem__ = lambda self, k: {"uuid": "r1"}[k]
-        mock_driver.run.side_effect = [
-            MagicMock(single=MagicMock(return_value=auth_record)),
-            MagicMock(),
-        ]
-        result = remove_reaction_by_owner("c1", "r1", "owner-fuid")
+        auth_result = mock_driver._make_result()
+        auth_result.single = AsyncMock(return_value=auth_record)
+        delete_result = mock_driver._make_result()
+
+        session.run.side_effect = [auth_result, delete_result]
+        result = await remove_reaction_by_owner("c1", "r1", "owner-fuid")
         assert result["success"] is True
 
-    def test_unauthorized(self, mock_driver):
-        mock_driver.run.return_value = MagicMock(single=MagicMock(return_value=None))
-        result = remove_reaction_by_owner("c1", "r1", "wrong-fuid")
+    async def test_unauthorized(self, mock_driver):
+        session = mock_driver._session
+        not_found_result = mock_driver._make_result()
+        not_found_result.single = AsyncMock(return_value=None)
+        session.run.return_value = not_found_result
+        result = await remove_reaction_by_owner("c1", "r1", "wrong-fuid")
         assert result["success"] is False
         assert result["status"] == 403
 
 
 class TestGetReactionCounts:
-    def test_aggregated_counts(self, mock_driver):
+    async def test_aggregated_counts(self, mock_driver):
+        session = mock_driver._session
         record = MagicMock()
         record.__getitem__ = lambda self, k: {
-            "emoji": "👍", "count": 3, "user_fuids": ["user-fuid", "other"]
+            "emoji": "\U0001f44d", "count": 3, "user_fuids": ["user-fuid", "other"]
         }[k]
-        mock_driver.run.return_value = MagicMock(__iter__=lambda s: iter([record]))
-        result = get_reaction_counts("c1", user_fuid="user-fuid")
+        session.run.return_value = mock_driver._make_result([record])
+        result = await get_reaction_counts("c1", user_fuid="user-fuid")
         assert result["success"] is True
-        assert result["data"]["👍"]["count"] == 3
-        assert result["data"]["👍"]["user_reacted"] is True
+        assert result["data"]["\U0001f44d"]["count"] == 3
+        assert result["data"]["\U0001f44d"]["user_reacted"] is True
 
-    def test_no_reactions(self, mock_driver):
-        mock_driver.run.return_value = MagicMock(__iter__=lambda s: iter([]))
-        result = get_reaction_counts("c1")
+    async def test_no_reactions(self, mock_driver):
+        session = mock_driver._session
+        session.run.return_value = mock_driver._make_result([])
+        result = await get_reaction_counts("c1")
         assert result["success"] is True
         assert result["data"] == {}

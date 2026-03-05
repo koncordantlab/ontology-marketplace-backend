@@ -3,22 +3,23 @@ import uuid
 from datetime import datetime, timezone
 
 
-def create_flag(comment_id: str, reason: str, details: str, user_fuid: str) -> dict:
+async def create_flag(comment_id: str, reason: str, details: str, user_fuid: str) -> dict:
     """Flag a comment."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Check for duplicate flag
-        dup = session.run(
+        dup = await session.run(
             "MATCH (u:User {fuid: $fuid})-[:FLAGGED_BY]-(f:Flag)-[:FLAGGED_CONTENT]-(c:Comment {uuid: $cid}) "
             "RETURN f.uuid AS uuid",
             fuid=user_fuid, cid=comment_id
         )
-        if dup.single():
+        record = await dup.single()
+        if record:
             return {"success": False, "error": "You have already flagged this comment", "status": 409}
 
         flag_uuid = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
-        session.run(
+        await session.run(
             "MATCH (c:Comment {uuid: $cid}) "
             "MERGE (u:User {fuid: $fuid}) "
             "CREATE (f:Flag {uuid: $fuuid, reason: $reason, details: $details, "
@@ -31,14 +32,14 @@ def create_flag(comment_id: str, reason: str, details: str, user_fuid: str) -> d
         return {"success": True, "data": {"uuid": flag_uuid}, "status": 201}
 
 
-def check_user_has_flagged(comment_id: str, user_fuid: str) -> dict:
+async def check_user_has_flagged(comment_id: str, user_fuid: str) -> dict:
     """Check if a user has already flagged a comment."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
-        result = session.run(
+    async with driver.session() as session:
+        result = await session.run(
             "MATCH (u:User {fuid: $fuid})-[:FLAGGED_BY]-(f:Flag)-[:FLAGGED_CONTENT]-(c:Comment {uuid: $cid}) "
             "RETURN f.uuid AS uuid",
             fuid=user_fuid, cid=comment_id
         )
-        record = result.single()
+        record = await result.single()
         return {"success": True, "data": {"has_flagged": record is not None}}

@@ -1,15 +1,16 @@
 from functions.n4j import get_neo4j_driver
+from functions.cache import invalidate_unread_cache, invalidate_activity_cache
 import uuid
 from datetime import datetime, timezone
 
 
-def send_message(recipient_fuid: str, subject: str, content: str, sender_fuid: str, sender_email: str) -> dict:
+async def send_message(recipient_fuid: str, subject: str, content: str, sender_fuid: str, sender_email: str) -> dict:
     """Send a message (admin-only)."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         msg_uuid = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
-        session.run(
+        await session.run(
             "MERGE (sender:User {fuid: $sender_fuid}) "
             "  ON CREATE SET sender.created_at = datetime(), sender.uuid = randomUUID(), sender.email = $sender_email "
             "MERGE (recipient:User {fuid: $recipient_fuid}) "
@@ -21,14 +22,16 @@ def send_message(recipient_fuid: str, subject: str, content: str, sender_fuid: s
             recipient_fuid=recipient_fuid, muuid=msg_uuid,
             subject=subject, content=content, now=now
         )
+        invalidate_unread_cache(recipient_fuid)
+        invalidate_activity_cache(recipient_fuid)
         return {"success": True, "data": {"uuid": msg_uuid}, "status": 201}
 
 
-def get_messages(user_fuid: str, limit: int = 20, offset: int = 0) -> dict:
+async def get_messages(user_fuid: str, limit: int = 20, offset: int = 0) -> dict:
     """Get messages for a user (inbox)."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
-        result = session.run(
+    async with driver.session() as session:
+        result = await session.run(
             "MATCH (m:Message)-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "WHERE NOT EXISTS((m)-[:REPLY_TO_MESSAGE]->()) "
             "OPTIONAL MATCH (sender:User)-[:SENT_MESSAGE]->(m) "
@@ -40,7 +43,7 @@ def get_messages(user_fuid: str, limit: int = 20, offset: int = 0) -> dict:
             fuid=user_fuid, limit=limit, offset=offset
         )
         messages = []
-        for record in result:
+        async for record in result:
             messages.append({
                 "uuid": record["uuid"],
                 "subject": record["subject"],
@@ -52,12 +55,12 @@ def get_messages(user_fuid: str, limit: int = 20, offset: int = 0) -> dict:
         return {"success": True, "data": {"messages": messages}}
 
 
-def get_message(message_id: str, user_fuid: str) -> dict:
+async def get_message(message_id: str, user_fuid: str) -> dict:
     """Get a single message with thread."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Get the message
-        result = session.run(
+        result = await session.run(
             "MATCH (m:Message {uuid: $mid}) "
             "OPTIONAL MATCH (sender:User)-[:SENT_MESSAGE]->(m) "
             "OPTIONAL MATCH (m)-[:RECEIVED_MESSAGE]->(recipient:User) "
@@ -67,7 +70,7 @@ def get_message(message_id: str, user_fuid: str) -> dict:
             "  recipient.fuid AS recipient_fuid",
             mid=message_id
         )
-        record = result.single()
+        record = await result.single()
         if not record:
             return {"success": False, "error": "Message not found", "status": 404}
 
@@ -76,7 +79,7 @@ def get_message(message_id: str, user_fuid: str) -> dict:
             return {"success": False, "error": "Not authorized", "status": 403}
 
         # Get replies in thread
-        replies_result = session.run(
+        replies_result = await session.run(
             "MATCH (reply:Message)-[:REPLY_TO_MESSAGE]->(m:Message {uuid: $mid}) "
             "OPTIONAL MATCH (rs:User)-[:SENT_MESSAGE]->(reply) "
             "ORDER BY reply.created_at ASC "
@@ -85,7 +88,7 @@ def get_message(message_id: str, user_fuid: str) -> dict:
             mid=message_id
         )
         replies = []
-        for r in replies_result:
+        async for r in replies_result:
             replies.append({
                 "uuid": r["uuid"],
                 "content": r["content"],
@@ -105,22 +108,22 @@ def get_message(message_id: str, user_fuid: str) -> dict:
         return {"success": True, "data": message}
 
 
-def reply_to_message(message_id: str, content: str, user_fuid: str, user_email: str) -> dict:
+async def reply_to_message(message_id: str, content: str, user_fuid: str, user_email: str) -> dict:
     """Reply to a message (only the recipient can reply)."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    async with driver.session() as session:
         # Verify user is recipient
-        auth = session.run(
+        auth = await session.run(
             "MATCH (m:Message {uuid: $mid})-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "RETURN m.uuid AS uuid",
             mid=message_id, fuid=user_fuid
         )
-        if not auth.single():
+        if not await auth.single():
             return {"success": False, "error": "Only the recipient can reply", "status": 403}
 
         reply_uuid = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
-        session.run(
+        await session.run(
             "MATCH (m:Message {uuid: $mid}) "
             "MERGE (u:User {fuid: $fuid}) "
             "  ON CREATE SET u.created_at = datetime(), u.uuid = randomUUID(), u.email = $email "
@@ -131,19 +134,22 @@ def reply_to_message(message_id: str, content: str, user_fuid: str, user_email: 
             mid=message_id, fuid=user_fuid, email=user_email,
             ruuid=reply_uuid, content=content, now=now
         )
+        invalidate_activity_cache()  # May affect multiple users
         return {"success": True, "data": {"uuid": reply_uuid}, "status": 201}
 
 
-def mark_message_read(message_id: str, user_fuid: str) -> dict:
+async def mark_message_read(message_id: str, user_fuid: str) -> dict:
     """Mark a message as read."""
     driver = get_neo4j_driver()
-    with driver.session() as session:
-        result = session.run(
+    async with driver.session() as session:
+        result = await session.run(
             "MATCH (m:Message {uuid: $mid})-[:RECEIVED_MESSAGE]->(u:User {fuid: $fuid}) "
             "SET m.is_read = true "
             "RETURN m.uuid AS uuid",
             mid=message_id, fuid=user_fuid
         )
-        if not result.single():
+        if not await result.single():
             return {"success": False, "error": "Message not found or not authorized", "status": 404}
+        invalidate_unread_cache(user_fuid)
+        invalidate_activity_cache(user_fuid)
         return {"success": True, "data": {"uuid": message_id, "is_read": True}}

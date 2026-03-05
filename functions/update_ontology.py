@@ -1,6 +1,7 @@
 from functions_framework import http
 from flask import Request
 from typing import Dict, Any
+import logging
 from .auth_utils import verify_firebase_token
 from datetime import datetime
 from .model_ontology import UpdateOntology,Ontology, OntologyResponse
@@ -72,7 +73,7 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
         }
     
     except Exception as e:
-        print(f"Database error: {str(e)}")
+        logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="Failed authorization check. User may not have access to edit this ontology",
@@ -167,7 +168,7 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
                     database_="neo4j"
                 )
             except Exception as e:
-                print(f"Tag sync error: {str(e)}")
+                logging.error(f"Tag sync error: {str(e)}")
         
         # Invalidate search cache when ontology is updated
         invalidate_search_cache()
@@ -197,7 +198,7 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
         )
             
     except Exception as e:
-        print(f"Database error: {str(e)}")
+        logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="Failed to update ontology",
@@ -281,7 +282,7 @@ def update_ontology_by_request(request: Request):
         return update_ontology(fuid, ontology_id, update_model)
 
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        logging.error(f"Unexpected error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="An unexpected error occurred",

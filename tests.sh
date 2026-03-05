@@ -18,7 +18,7 @@ source .venv/bin/activate
 
 # Install dependencies (including pytest + coverage)
 pip install -r requirements.txt --quiet
-pip install pytest pytest-mock pytest-cov httpx --quiet
+pip install pytest pytest-mock pytest-cov pytest-asyncio httpx --quiet
 
 # Save previous coverage if it exists
 mkdir -p "$COVERAGE_DIR"
