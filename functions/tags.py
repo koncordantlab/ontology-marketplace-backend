@@ -3,10 +3,10 @@ from typing import List
 from .n4j import get_neo4j_driver
 
 
-def get_tags(neo4j_database: str | None = None) -> List[str]:
+async def get_tags(neo4j_database: str | None = None) -> List[str]:
     """Return all tag names in lowercase as a list of strings."""
-    with get_neo4j_driver().session(database=neo4j_database) as session:
-        result = session.run(
+    async with get_neo4j_driver().session(database=neo4j_database) as session:
+        result = await session.run(
             """
             MATCH (t:Tag)
             WITH toLower(t.name) AS name
@@ -14,14 +14,12 @@ def get_tags(neo4j_database: str | None = None) -> List[str]:
             ORDER BY name
             """
         )
-        return [record["name"] for record in result]
+        records = [record async for record in result]
+        return [record["name"] for record in records]
 
 
-def add_tags(tags: List[str], neo4j_database: str | None = None) -> List[str]:
-    """Create Tag nodes for the provided tag strings, enforcing lowercase and uniqueness.
-
-    Returns the set of all tags that exist after creation, in lowercase.
-    """
+async def add_tags(tags: List[str], neo4j_database: str | None = None) -> List[str]:
+    """Create Tag nodes for the provided tag strings, enforcing lowercase and uniqueness."""
     if not tags:
         return []
 
@@ -29,17 +27,15 @@ def add_tags(tags: List[str], neo4j_database: str | None = None) -> List[str]:
     if not lowered:
         return []
 
-    with get_neo4j_driver().session(database=neo4j_database) as session:
-        # MERGE create tags (idempotent). Use UNWIND batching.
-        session.run(
+    async with get_neo4j_driver().session(database=neo4j_database) as session:
+        await session.run(
             """
             UNWIND $names AS name
             MERGE (:Tag {name: name})
             """,
             names=lowered,
         )
-        # Return all tag names (distinct), lowercased and ordered
-        result = session.run(
+        result = await session.run(
             """
             MATCH (t:Tag)
             WITH toLower(t.name) AS name
@@ -47,4 +43,5 @@ def add_tags(tags: List[str], neo4j_database: str | None = None) -> List[str]:
             ORDER BY name
             """
         )
-        return [record["name"] for record in result]
+        records = [record async for record in result]
+        return [record["name"] for record in records]

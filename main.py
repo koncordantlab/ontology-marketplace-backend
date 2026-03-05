@@ -1,6 +1,8 @@
+import logging
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from functions.search_ontologies import search_ontologies
@@ -20,6 +22,19 @@ from functions.model_user import (
 )
 from functions.upload_ontology import upload_ontology
 from functions.tags import get_tags as get_all_tags, add_tags as create_tags
+from functions.comments import (
+    create_comment, get_comments, edit_comment, delete_comment,
+    create_reply, get_replies
+)
+from functions.model_comment import NewComment, NewReply, NewReaction
+from functions.reactions import toggle_reaction, remove_reaction, remove_reaction_by_owner, get_reaction_counts
+from functions.flags import create_flag, check_user_has_flagged
+from functions.model_flag import NewFlag
+from functions.messages import send_message, get_messages, get_message, reply_to_message, mark_message_read
+from functions.model_message import NewMessage, MessageReply
+from functions.activity import get_activity_feed, get_unread_count, mark_read, mark_all_read
+from functions.get_ontology import get_ontology_by_id
+from functions.n4j import close_neo4j_driver
 
 # Load environment variables from .env file
 load_dotenv()
@@ -53,12 +68,15 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Add GZip compression for responses > 500 bytes
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security_bearer)):
     # Development bypass (useful for local testing of endpoints without Firebase)
     if os.getenv('ALLOW_DEV_AUTH_BYPASS') == '1':
         dev_email = request.headers.get('X-Dev-Email') or os.getenv('DEV_AUTH_EMAIL')
         if dev_email:
-            print(f"DEV AUTH BYPASS active, using email={dev_email}")
+            logging.warning(f"DEV AUTH BYPASS active, using email={dev_email}")
             return {
                 'email': dev_email,
                 'email_verified': True,
@@ -72,13 +90,11 @@ async def get_current_user(request: Request, credentials: HTTPAuthorizationCrede
         if not token or len(token) < 10:
             raise ValueError("Token is empty or too short")
         
-        print(f"Verifying token (length: {len(token)}, starts with: {token[:20]}...)")
         decoded_token = auth.verify_id_token(token)
-        print(f"Token verified successfully for user: {decoded_token.get('email', 'N/A')}")
         return decoded_token
     except ValueError as ve:
         # Re-raise ValueError exceptions (like from verify_firebase_token)
-        print(f"ValueError during token verification: {str(ve)}")
+        logging.warning(f"ValueError during token verification: {str(ve)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(ve),
@@ -87,8 +103,7 @@ async def get_current_user(request: Request, credentials: HTTPAuthorizationCrede
     except Exception as e:
         # Catch other exceptions (network, Firebase SDK errors, etc.)
         error_detail = str(e)
-        print(f"Token verification failed: {error_detail}")
-        print(f"Error type: {type(e).__name__}")
+        logging.error(f"Token verification failed: {error_detail} (type: {type(e).__name__})")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication failed: {error_detail}",
@@ -119,7 +134,7 @@ async def search_ontologies_endpoint(
     """
     Search for ontologies based on query parameters
     """
-    return search_ontologies(search_term, limit, offset, request)
+    return await search_ontologies(search_term, limit, offset, request)
 
 @app.post("/add_ontologies", response_model=OntologyResponse)
 async def add_ontologies_endpoint(
@@ -139,7 +154,7 @@ async def add_ontologies_endpoint(
                 data=None
             )
         ontology_dicts = [onto.model_dump() for onto in ontologies]
-        return add_ontologies(
+        return await add_ontologies(
             ontology_dicts,
             email=current_user.get('email'),
             fuid=fuid,
@@ -169,7 +184,7 @@ async def delete_ontologies_endpoint(
                 message="Missing user ID in authentication token",
                 data=None
             )
-        return delete_ontologies(fuid, ontology_ids)
+        return await delete_ontologies(fuid, ontology_ids)
     except Exception as e:
         return OntologyResponse(
             success=False,
@@ -199,8 +214,7 @@ async def update_ontology_endpoint(
                 message="Missing user ID in authentication token",
                 data=None
             )
-        print(f"Updating ontology {ontology_uuid} for uid {fuid} with data {ontology.model_dump()}")
-        return update_ontology(fuid, ontology_uuid, ontology)
+        return await update_ontology(fuid, ontology_uuid, ontology)
     except Exception as e:
         return OntologyResponse(
             success=False,
@@ -334,7 +348,7 @@ async def get_tags_endpoint():
     """
     # Optional: allow overriding database via env if needed later
     db = os.getenv('NEO4J_DATABASE', 'neo4j')
-    return get_all_tags(neo4j_database=db)
+    return await get_all_tags(neo4j_database=db)
 
 class TagList(BaseModel):
     tags: List[str]
@@ -348,7 +362,7 @@ async def add_tags_endpoint(
     Create Tag nodes for the provided strings and return all tags in lowercase.
     """
     db = os.getenv('NEO4J_DATABASE', 'neo4j')
-    return create_tags(payload.tags, neo4j_database=db)
+    return await create_tags(payload.tags, neo4j_database=db)
 
 
 class UpdateUser(BaseModel):
@@ -395,7 +409,7 @@ async def get_user_endpoint(current_user: dict = Depends(get_current_user)):
     Return the current user's public flag and permissions.
     """
     fuid = current_user.get('uid')
-    profile = get_user_profile_by_fuid(fuid)
+    profile = await get_user_profile_by_fuid(fuid)
     return profile
 
 
@@ -405,11 +419,266 @@ async def update_user_endpoint(payload: UpdateUser, current_user: dict = Depends
     Update the current user's public visibility flag.
     """
     fuid = current_user.get('uid')
-    success = update_user_is_public_by_fuid(fuid, payload.is_public)
+    success = await update_user_is_public_by_fuid(fuid, payload.is_public)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update user")
     # Return updated state
-    return get_user_profile_by_fuid(fuid)
+    return await get_user_profile_by_fuid(fuid)
+
+@app.get("/ontologies/{ontology_id}")
+async def get_ontology_endpoint(
+    ontology_id: str,
+    request: Request,
+):
+    """Get a single ontology by ID. Supports both authenticated and unauthenticated access."""
+    fuid = None
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0].lower() == 'bearer':
+                from functions.auth_utils import verify_firebase_token
+                decoded = verify_firebase_token(parts[1])
+                fuid = decoded.get('uid')
+    except Exception:
+        fuid = None
+
+    return await get_ontology_by_id(ontology_id, fuid)
+
+# --- Comment Endpoints ---
+
+@app.get("/ontologies/{ontology_id}/comments")
+async def get_comments_endpoint(
+    ontology_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    result = await get_comments(ontology_id, limit, offset, current_user.get("uid"))
+    return result
+
+@app.post("/ontologies/{ontology_id}/comments", status_code=201)
+async def create_comment_endpoint(
+    ontology_id: str,
+    comment: NewComment,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    if not fuid:
+        raise HTTPException(status_code=401, detail="Missing user ID")
+    result = await create_comment(ontology_id, comment.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/comments/{comment_id}")
+async def edit_comment_endpoint(
+    comment_id: str,
+    comment: NewComment,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await edit_comment(comment_id, comment.content, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}")
+async def delete_comment_endpoint(
+    comment_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await delete_comment(comment_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.post("/comments/{comment_id}/replies", status_code=201)
+async def create_reply_endpoint(
+    comment_id: str,
+    reply: NewReply,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = await create_reply(comment_id, reply.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/comments/{comment_id}/replies")
+async def get_replies_endpoint(
+    comment_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    result = await get_replies(comment_id, limit, offset)
+    return result
+
+# --- Reaction Endpoints ---
+
+@app.post("/comments/{comment_id}/reactions", status_code=201)
+async def toggle_reaction_endpoint(
+    comment_id: str,
+    reaction: NewReaction,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await toggle_reaction(comment_id, reaction.emoji, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}/reactions/{emoji}")
+async def remove_reaction_endpoint(
+    comment_id: str,
+    emoji: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await remove_reaction(comment_id, emoji, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.delete("/comments/{comment_id}/reactions/by-id/{reaction_id}")
+async def remove_reaction_by_owner_endpoint(
+    comment_id: str,
+    reaction_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await remove_reaction_by_owner(comment_id, reaction_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/comments/{comment_id}/reactions")
+async def get_reaction_counts_endpoint(
+    comment_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return await get_reaction_counts(comment_id, fuid)
+
+# --- Flag Endpoints ---
+
+@app.post("/comments/{comment_id}/flag", status_code=201)
+async def flag_comment_endpoint(
+    comment_id: str,
+    flag: NewFlag,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await create_flag(comment_id, flag.reason, flag.details, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+# --- Message Endpoints ---
+
+@app.post("/messages", status_code=201)
+async def send_message_endpoint(
+    message: NewMessage,
+    current_user: dict = Depends(get_current_user)
+):
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only admins can send messages")
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = await send_message(message.recipient_fuid, message.subject, message.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.get("/messages")
+async def get_messages_endpoint(
+    limit: int = 20,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return await get_messages(fuid, limit, offset)
+
+@app.get("/messages/{message_id}")
+async def get_message_endpoint(
+    message_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await get_message(message_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.post("/messages/{message_id}/reply", status_code=201)
+async def reply_to_message_endpoint(
+    message_id: str,
+    reply: MessageReply,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    email = current_user.get("email")
+    result = await reply_to_message(message_id, reply.content, fuid, email)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/messages/{message_id}/read")
+async def mark_message_read_endpoint(
+    message_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await mark_message_read(message_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+# --- Activity Feed Endpoints ---
+
+@app.get("/users/me/activity")
+async def get_activity_endpoint(
+    limit: int = 20,
+    offset: int = 0,
+    type: str = None,
+    search: str = None,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return await get_activity_feed(fuid, limit, offset, type, search)
+
+@app.get("/users/me/activity/unread-count")
+async def get_unread_count_endpoint(
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return await get_unread_count(fuid)
+
+@app.put("/users/me/activity/{item_id}/read")
+async def mark_read_endpoint(
+    item_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    result = await mark_read(item_id, fuid)
+    if not result["success"]:
+        raise HTTPException(status_code=result.get("status", 400), detail=result["error"])
+    return result
+
+@app.put("/users/me/activity/read-all")
+async def mark_all_read_endpoint(
+    current_user: dict = Depends(get_current_user)
+):
+    fuid = current_user.get("uid")
+    return await mark_all_read(fuid)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await close_neo4j_driver()
 
 if __name__ == "__main__":
     import uvicorn

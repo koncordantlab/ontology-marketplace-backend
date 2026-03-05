@@ -1,6 +1,7 @@
 from functions_framework import http
 from flask import Request
 from typing import List
+import logging
 from .auth_utils import verify_firebase_token
 from .model_ontology import OntologyResponse
 from .n4j import get_neo4j_driver
@@ -62,7 +63,7 @@ def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
         )
             
     except Exception as e:
-        print(f"Database error: {str(e)}")
+        logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="Failed to delete ontologies",
@@ -135,7 +136,7 @@ def delete_ontologies_by_request(request: Request):
         return delete_ontologies(fuid, request_json)
 
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        logging.error(f"Unexpected error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="An unexpected error occurred",
