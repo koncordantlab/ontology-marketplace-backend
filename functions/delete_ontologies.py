@@ -7,14 +7,14 @@ from .model_ontology import OntologyResponse
 from .n4j import get_neo4j_driver
 from .cache import invalidate_search_cache
 
-def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
+async def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
     """
-    Delete ontologies from the database.
-    
+    Soft-delete ontologies by setting is_deleted = true.
+
     Args:
         fuid: Firebase UID of the user performing the deletion
         ontology_ids: List of ontology uuids to delete
-        
+
     Returns:
         OntologyResponse with the result of the operation
     """
@@ -24,49 +24,106 @@ def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
             message="No ontology IDs provided",
             data=None
         )
-    
+
     try:
         driver = get_neo4j_driver()
-        
-        # Delete ontologies and their relationships
+
+        # Soft delete: set is_deleted = true instead of removing the node
         query = """
             UNWIND $ontology_ids AS ontology_id
             MATCH (o:Ontology {uuid: ontology_id})
             MATCH (u:User {fuid: $fuid})
             WHERE EXISTS((u)-[:CREATED|CAN_DELETE]->(o))
-            WITH o, u
-            DETACH DELETE o
+            SET o.is_deleted = true
             RETURN count(o) as deleted_count
         """
-        
-        result = driver.execute_query(
-            query,
-            fuid=fuid,
-            ontology_ids=ontology_ids,
-            result_transformer_=lambda r: r.single()["deleted_count"]
-        )
-        
-        if result == 0:
+
+        async with driver.session() as session:
+            result = await session.run(query, fuid=fuid, ontology_ids=ontology_ids)
+            record = await result.single()
+            deleted_count = record["deleted_count"] if record else 0
+
+        if deleted_count == 0:
             return OntologyResponse(
                 success=False,
                 message="No ontologies found with the provided IDs for the given user",
                 data={"deleted_count": 0}
             )
-        
+
         # Invalidate search cache when ontologies are deleted
         invalidate_search_cache()
-        
+
         return OntologyResponse(
             success=True,
-            message=f"Successfully deleted {result} ontologies",
-            data={"deleted_count": result}
+            message=f"Successfully deleted {deleted_count} ontologies",
+            data={"deleted_count": deleted_count}
         )
-            
+
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
             success=False,
             message="Failed to delete ontologies",
+            data=None
+        )
+
+
+async def restore_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
+    """
+    Restore soft-deleted ontologies by setting is_deleted = false.
+
+    Args:
+        fuid: Firebase UID of the user performing the restore
+        ontology_ids: List of ontology uuids to restore
+
+    Returns:
+        OntologyResponse with the result of the operation
+    """
+    if not ontology_ids:
+        return OntologyResponse(
+            success=False,
+            message="No ontology IDs provided",
+            data=None
+        )
+
+    try:
+        driver = get_neo4j_driver()
+
+        query = """
+            UNWIND $ontology_ids AS ontology_id
+            MATCH (o:Ontology {uuid: ontology_id, is_deleted: true})
+            MATCH (u:User {fuid: $fuid})
+            WHERE EXISTS((u)-[:CREATED|CAN_DELETE]->(o))
+            SET o.is_deleted = false
+            RETURN count(o) as restored_count
+        """
+
+        async with driver.session() as session:
+            result = await session.run(query, fuid=fuid, ontology_ids=ontology_ids)
+            record = await result.single()
+            restored_count = record["restored_count"] if record else 0
+
+        if restored_count == 0:
+            return OntologyResponse(
+                success=False,
+                message="No deleted ontologies found with the provided IDs for the given user",
+                data={"restored_count": 0}
+            )
+
+        # Invalidate search cache when ontologies are restored
+        invalidate_search_cache()
+
+        return OntologyResponse(
+            success=True,
+            message=f"Successfully restored {restored_count} ontologies",
+            data={"restored_count": restored_count}
+        )
+
+    except Exception as e:
+        logging.error(f"Database error: {str(e)}")
+        return OntologyResponse(
+            success=False,
+            message="Failed to restore ontologies",
             data=None
         )
 

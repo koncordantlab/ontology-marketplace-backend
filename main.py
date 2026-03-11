@@ -12,6 +12,7 @@ from functions.update_ontology import update_ontology
 from functions.model_ontology import UpdateOntology, Ontology, NewOntology, OntologyResponse, UploadOntology
 from functions.auth_utils import initialize_firebase
 from firebase_admin import auth
+import asyncio
 import os
 import tempfile
 from dotenv import load_dotenv
@@ -232,7 +233,8 @@ async def upload_ontology_endpoint(
     Upload an ontology
     """
     try:
-        result = upload_ontology(
+        result = await asyncio.to_thread(
+            upload_ontology,
             source=ontology.source_url,
             ontology_uuid=None,
             neo4j_uri=ontology.neo4j_uri,
@@ -298,7 +300,8 @@ async def upload_ontology_file_endpoint(
                 data=None,
             )
 
-        result = upload_ontology(
+        result = await asyncio.to_thread(
+            upload_ontology,
             source=source,
             ontology_uuid=None,
             neo4j_uri=neo4j_uri,
@@ -387,13 +390,20 @@ async def test_neo4j_connection_endpoint(
     from neo4j import GraphDatabase
     from neo4j.exceptions import ServiceUnavailable, AuthError
 
-    try:
+    def _test_connection():
         driver = GraphDatabase.driver(
             payload.neo4j_uri,
-            auth=(payload.neo4j_username, payload.neo4j_password)
+            auth=(payload.neo4j_username, payload.neo4j_password),
+            connection_timeout=5,
+            max_transaction_retry_time=1,
         )
-        driver.verify_connectivity()
-        driver.close()
+        try:
+            driver.verify_connectivity()
+        finally:
+            driver.close()
+
+    try:
+        await asyncio.to_thread(_test_connection)
         return {"success": True, "message": "Connection successful"}
     except AuthError:
         return {"success": False, "message": "Authentication failed"}

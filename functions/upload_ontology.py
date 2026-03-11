@@ -217,7 +217,12 @@ def upload_ontology(
         if not neo4j_uri or not neo4j_username or not neo4j_password:
             raise ValueError("Neo4j credentials are required")
 
-        driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_username, neo4j_password))
+        driver = GraphDatabase.driver(
+            neo4j_uri,
+            auth=(neo4j_username, neo4j_password),
+            connection_timeout=5,
+            max_transaction_retry_time=1,
+        )
 
         counters = {'nodes': 0, 'relationships': 0}
 
