@@ -8,15 +8,15 @@ from .model_ontology import UpdateOntology,Ontology, OntologyResponse
 from .n4j import get_neo4j_driver
 from .cache import invalidate_search_cache
 
-def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) -> OntologyResponse:
+async def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) -> OntologyResponse:
     """
     Update an existing ontology in the database.
-    
+
     Args:
         fuid: Firebase UID of the owner or editor of ontologies
         ontology_id: The uuid of the ontology to update
         update_data: Dictionary containing fields to update
-        
+
     Returns:
         OntologyResponse with the result of the operation
     """
@@ -26,31 +26,27 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
             message="No ontology ID provided",
             data=None
         )
-    
+
+    driver = get_neo4j_driver()
+
     try:
-        driver = get_neo4j_driver()
-        
         # First, check if the user is authorized to update this ontology
         auth_check_query = """
             MATCH (o:Ontology {uuid: $ontology_id})
             OPTIONAL MATCH (u:User {fuid: $fuid})
-            WITH o, u, 
-                CASE WHEN u IS NULL THEN false 
-                    ELSE EXISTS((u)-[:CREATED|CAN_EDIT]->(o)) 
+            WITH o, u,
+                CASE WHEN u IS NULL THEN false
+                    ELSE EXISTS((u)-[:CREATED|CAN_EDIT]->(o))
                 END as is_authorized
-            RETURN 
+            RETURN
                 o IS NOT NULL as ontology_exists,
                 is_authorized
         """
-        
-        is_authorized = driver.execute_query(
-            auth_check_query,
-            fuid=fuid,
-            ontology_id=ontology_id,
-            database_="neo4j",
-            result_transformer_=lambda r: r.single()
-        )
-        
+
+        async with driver.session(database="neo4j") as session:
+            result = await session.run(auth_check_query, fuid=fuid, ontology_id=ontology_id)
+            is_authorized = await result.single()
+
         if not is_authorized or not is_authorized.get('ontology_exists'):
             return OntologyResponse(
                 success=False,
@@ -64,14 +60,7 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
                 message="Not authorized to update this ontology",
                 data=None
             )
-        
-        # Prepare the SET clause for the update
-        set_clauses = []
-        params = {
-            'fuid': fuid,
-            'ontology_id': ontology_id
-        }
-    
+
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
@@ -79,17 +68,15 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
             message="Failed authorization check. User may not have access to edit this ontology",
             data=None
         )
-    
+
     try:
-        driver = get_neo4j_driver()
-        
         # Prepare the SET clause for the update
         set_clauses = []
         params = {
             'fuid': fuid,
             'ontology_id': ontology_id
         }
-        
+
         # Only include fields that are present in update_data
         allowed_fields = {
             'name': str,
@@ -100,7 +87,7 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
             'relationship_count': int,
             'is_public': bool
         }
-        
+
         # Convert Pydantic model to dict and filter out None values
         update_dict = {k: v for k, v in update_data.model_dump().items() if v is not None}
 
@@ -114,10 +101,10 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
         tags_to_set = None
         if 'tags' in update_dict and isinstance(update_dict['tags'], list):
             tags_to_set = sorted({(t or '').strip().lower() for t in update_dict['tags'] if isinstance(t, str) and t.strip()})
-        
+
         # Add updated timestamp
         set_clauses.append("o.updated_time = datetime()")
-        
+
         query = f"""
             MATCH (u:User {{fuid: $fuid}})
             MATCH (o:Ontology {{uuid: $ontology_id}})
@@ -126,15 +113,12 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
             SET {', '.join(set_clauses)}
             RETURN o
         """
-        
-        result = driver.execute_query(
-            query,
-            **params,
-            database_="neo4j",
-            result_transformer_=lambda r: r.single()
-        )
-        
-        if not result:
+
+        async with driver.session(database="neo4j") as session:
+            result = await session.run(query, **params)
+            record = await result.single()
+
+        if not record:
             return OntologyResponse(
                 success=False,
                 message="No ontology found with the provided ID",
@@ -144,59 +128,58 @@ def update_ontology(fuid: str, ontology_id: str, update_data: UpdateOntology) ->
         # If tags were provided, sync TAGGED relationships
         if tags_to_set is not None:
             try:
-                # Remove relationships not in desired set
-                driver.execute_query(
-                    """
-                    MATCH (o:Ontology {uuid: $ontology_id})-[r:TAGGED]->(t:Tag)
-                    WHERE NOT toLower(t.name) IN $wanted
-                    DELETE r
-                    """,
-                    ontology_id=ontology_id,
-                    wanted=tags_to_set,
-                    database_="neo4j"
-                )
-                # Add relationships for desired set (and ensure Tag nodes exist)
-                driver.execute_query(
-                    """
-                    MATCH (o:Ontology {uuid: $ontology_id})
-                    UNWIND $wanted AS name
-                    MERGE (t:Tag {name: toLower(name)})
-                    MERGE (o)-[:TAGGED]->(t)
-                    """,
-                    ontology_id=ontology_id,
-                    wanted=tags_to_set,
-                    database_="neo4j"
-                )
+                async with driver.session(database="neo4j") as session:
+                    # Remove relationships not in desired set
+                    await session.run(
+                        """
+                        MATCH (o:Ontology {uuid: $ontology_id})-[r:TAGGED]->(t:Tag)
+                        WHERE NOT toLower(t.name) IN $wanted
+                        DELETE r
+                        """,
+                        ontology_id=ontology_id,
+                        wanted=tags_to_set,
+                    )
+                    # Add relationships for desired set (and ensure Tag nodes exist)
+                    await session.run(
+                        """
+                        MATCH (o:Ontology {uuid: $ontology_id})
+                        UNWIND $wanted AS name
+                        MERGE (t:Tag {name: toLower(name)})
+                        MERGE (o)-[:TAGGED]->(t)
+                        """,
+                        ontology_id=ontology_id,
+                        wanted=tags_to_set,
+                    )
             except Exception as e:
                 logging.error(f"Tag sync error: {str(e)}")
-        
+
         # Invalidate search cache when ontology is updated
         invalidate_search_cache()
-        
+
         # Convert the Neo4j node to an Ontology object
-        created_at = result['o']['created_at']
+        created_at = record['o']['created_at']
         if hasattr(created_at, 'to_native'):
             created_at = created_at.to_native()  # Convert Neo4j DateTime to Python datetime
 
         updated_ontology = Ontology(
-            uuid=result['o']['uuid'],
-            name=result['o']['name'],
-            source_url=result['o']['source_url'],
-            image_url=result['o'].get('image_url'),
-            description=result['o'].get('description'),
-            node_count=result['o'].get('node_count'),
-            relationship_count=result['o'].get('relationship_count'),
-            is_public=result['o'].get('is_public', False),
-            score=result['o'].get('score'),
+            uuid=record['o']['uuid'],
+            name=record['o']['name'],
+            source_url=record['o']['source_url'],
+            image_url=record['o'].get('image_url'),
+            description=record['o'].get('description'),
+            node_count=record['o'].get('node_count'),
+            relationship_count=record['o'].get('relationship_count'),
+            is_public=record['o'].get('is_public', False),
+            score=record['o'].get('score'),
             created_at=created_at
         )
-        
+
         return OntologyResponse(
             success=True,
             message="Ontology updated successfully",
             data=updated_ontology.model_dump()
         )
-            
+
     except Exception as e:
         logging.error(f"Database error: {str(e)}")
         return OntologyResponse(
