@@ -21,6 +21,7 @@ from functions.model_user import (
     get_user_uuid_by_fuid,
     get_user_profile_by_fuid,
     update_user_is_public_by_fuid,
+    sync_user_info,
 )
 from functions.upload_ontology import upload_ontology
 from functions.tags import get_tags as get_all_tags, add_tags as create_tags
@@ -418,8 +419,12 @@ async def test_neo4j_connection_endpoint(
 async def get_user_endpoint(current_user: dict = Depends(get_current_user)):
     """
     Return the current user's public flag and permissions.
+    Also syncs name and email from the Firebase token to Neo4j.
     """
     fuid = current_user.get('uid')
+    email = current_user.get('email')
+    name = current_user.get('name')
+    await sync_user_info(fuid, email, name)
     profile = await get_user_profile_by_fuid(fuid)
     return profile
 

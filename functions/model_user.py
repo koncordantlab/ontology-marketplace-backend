@@ -165,6 +165,29 @@ async def get_user_profile_by_fuid(fuid: str) -> dict:
         }
 
 
+async def sync_user_info(fuid: str, email: str = None, name: str = None):
+    """
+    Sync user name and email from Firebase token to Neo4j.
+    Only fills in missing values, never overwrites existing ones.
+    """
+    if not fuid:
+        return
+    try:
+        async with get_neo4j_driver().session(database="neo4j") as session:
+            await session.run(
+                """
+                MERGE (u:User {fuid: $fuid})
+                ON CREATE SET u.created_at = datetime(), u.uuid = randomUUID(),
+                    u.email = $email, u.name = $name
+                ON MATCH SET u.email = COALESCE(u.email, $email),
+                    u.name = COALESCE(u.name, $name)
+                """,
+                fuid=fuid, email=email, name=name,
+            )
+    except Exception as e:
+        logging.error(f"Error syncing user info: {str(e)}")
+
+
 async def update_user_is_public_by_fuid(fuid: str, is_public: bool) -> bool:
     """
     Upsert the User node by fuid and set is_public flag.

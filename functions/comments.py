@@ -45,6 +45,7 @@ async def create_comment(ontology_id: str, content: str, user_fuid: str, user_em
             "MATCH (o:Ontology {uuid: $oid}) "
             "MERGE (u:User {fuid: $fuid}) "
             "  ON CREATE SET u.created_at = datetime(), u.uuid = randomUUID(), u.email = $email "
+            "  ON MATCH SET u.email = COALESCE(u.email, $email) "
             "CREATE (c:Comment {uuid: $cuuid, content: $content, is_deleted: false, "
             "  created_at: datetime($now), updated_at: null}) "
             "CREATE (u)-[:AUTHORED]->(c) "
@@ -74,7 +75,7 @@ async def get_comments(ontology_id: str, limit: int = 20, offset: int = 0, curre
             "SKIP $offset LIMIT $limit "
             "RETURN c.uuid AS uuid, c.content AS content, c.is_deleted AS is_deleted, "
             "  c.created_at AS created_at, c.updated_at AS updated_at, "
-            "  author.email AS author_email, author.fuid AS author_fuid, "
+            "  author.email AS author_email, author.name AS author_name, author.fuid AS author_fuid, "
             "  reply_count, reaction_emojis, reaction_total",
             oid=ontology_id, limit=limit, offset=offset
         )
@@ -96,6 +97,7 @@ async def get_comments(ontology_id: str, limit: int = 20, offset: int = 0, curre
                 "created_at": str(record["created_at"]),
                 "updated_at": str(record["updated_at"]) if record["updated_at"] else None,
                 "author_email": record["author_email"],
+                "author_name": record["author_name"],
                 "reply_count": record["reply_count"],
                 "is_editable": is_editable,
             })
@@ -213,6 +215,7 @@ async def create_reply(parent_comment_id: str, content: str, user_fuid: str, use
             "MATCH (root:Comment {uuid: $root_uuid}) "
             "MERGE (u:User {fuid: $fuid}) "
             "  ON CREATE SET u.created_at = datetime(), u.uuid = randomUUID(), u.email = $email "
+            "  ON MATCH SET u.email = COALESCE(u.email, $email) "
             "CREATE (reply:Comment {uuid: $ruuid, content: $content, is_deleted: false, "
             "  created_at: datetime($now), updated_at: null}) "
             "CREATE (u)-[:AUTHORED]->(reply) "
