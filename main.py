@@ -139,6 +139,52 @@ async def search_ontologies_endpoint(
     """
     return await search_ontologies(search_term, limit, offset, request)
 
+@app.get("/ontology_counts")
+async def ontology_counts_endpoint(request: Request):
+    """Return category counts: total, public, private, recently modified."""
+    from functions.auth_utils import verify_firebase_token
+    from functions.n4j import get_neo4j_driver
+
+    fuid = None
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0].lower() == 'bearer':
+                decoded = verify_firebase_token(parts[1])
+                fuid = decoded.get('uid')
+    except Exception:
+        fuid = None
+
+    if fuid:
+        perm = "(o.is_public = true OR EXISTS((:User {fuid: $fuid})-[:CREATED|CAN_EDIT|CAN_DELETE]->(o)))"
+        params = {'fuid': fuid}
+    else:
+        perm = "o.is_public = true"
+        params = {}
+
+    query = f"""
+        MATCH (o:Ontology) WHERE {perm}
+        RETURN
+          count(o) AS total,
+          count(CASE WHEN o.is_public = true THEN 1 END) AS public_count,
+          count(CASE WHEN o.is_public = false OR o.is_public IS NULL THEN 1 END) AS private_count,
+          count(CASE WHEN o.created_at > datetime() - duration({{days: 7}}) THEN 1 END) AS recent_count
+    """
+
+    driver = get_neo4j_driver()
+    async with driver.session() as session:
+        result = await session.run(query, params)
+        record = await result.single()
+
+    return {
+        "total": record["total"],
+        "public": record["public_count"],
+        "private": record["private_count"],
+        "recent": record["recent_count"],
+    }
+
+
 @app.post("/add_ontologies", response_model=OntologyResponse)
 async def add_ontologies_endpoint(
     request: Request,
