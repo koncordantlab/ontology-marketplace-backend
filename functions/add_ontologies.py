@@ -26,7 +26,7 @@ def add_cors_headers(response):
     response.headers['Access-Control-Max-Age'] = '3600'
     return response
 
-def add_ontologies(
+async def add_ontologies(
     ontology_data: list[dict],
     created_at_override: datetime = None,
     email: str = None,
@@ -117,19 +117,18 @@ def add_ontologies(
                 # If created_at missing, set to current UTC time in ISO format
                 onto['created_at'] = datetime.now(timezone.utc).isoformat()
         
-        # Execute the query 
+        # Execute the query
         try:
-            with get_neo4j_driver() as driver:
-                result = driver.execute_query(
+            driver = get_neo4j_driver()
+            async with driver.session() as session:
+                neo4j_result = await session.run(
                     query,
                     ontologies=onto_dicts,
                     fuid=fuid,
                     email=email,
-                    database_="neo4j",
-                    result_transformer_=lambda r: [dict(record) for record in r]
                 )
-        
-                    
+                result = [dict(record) async for record in neo4j_result]
+
                 message = ''
                 if len(result) > 0:
                     message = f'Successfully added {len(result)} ontologies.'
@@ -147,9 +146,9 @@ def add_ontologies(
                         'created_ontologies': [{'uuid': r['uuid'], 'name': r['name'], 'source_url': r['source_url']} for r in result]
                             }
                         }
-        
+
                 return OntologyResponse(**response_data)
-                        
+
         except Exception as e:
             logging.error(f"Database error: {str(e)}")
             return OntologyResponse(

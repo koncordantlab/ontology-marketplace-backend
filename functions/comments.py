@@ -239,7 +239,7 @@ async def get_replies(comment_id: str, limit: int = 20, offset: int = 0) -> dict
             "SKIP $offset LIMIT $limit "
             "RETURN reply.uuid AS uuid, reply.content AS content, "
             "  reply.is_deleted AS is_deleted, reply.created_at AS created_at, "
-            "  author.email AS author_email",
+            "  author.email AS author_email, author.name AS author_name",
             cid=comment_id, limit=limit, offset=offset
         )
         replies = []
@@ -250,5 +250,6 @@ async def get_replies(comment_id: str, limit: int = 20, offset: int = 0) -> dict
                 "is_deleted": record["is_deleted"],
                 "created_at": str(record["created_at"]),
                 "author_email": record["author_email"],
+                "author_name": record["author_name"],
             })
         return {"success": True, "data": {"replies": replies}}
