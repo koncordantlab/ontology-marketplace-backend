@@ -17,7 +17,9 @@ async def search_ontologies(
     search_term: str = None,
     limit: int = 100,
     offset: int = 0,
-    request: Optional[Request] = None
+    request: Optional[Request] = None,
+    is_public: Optional[bool] = None,
+    recent_only: bool = False,
 ) -> OntologyResponse:
     """
     Search for ontologies in the database.
@@ -27,6 +29,8 @@ async def search_ontologies(
         limit: Maximum number of results to return (default: 100, max: 100)
         offset: Number of results to skip for pagination (default: 0)
         request: Optional Flask request object for authentication
+        is_public: If True, only public. If False, only private. If None, both.
+        recent_only: If True, filter to ontologies created in the last 7 days.
 
     Returns:
         Tuple of (response_data, status_code, headers)
@@ -63,22 +67,27 @@ async def search_ontologies(
             permission_clause = "o.is_public = true"
             permission_params = {}
 
-        # Build combined data + count query
+        # Build WHERE clause with optional filters
+        clauses = [permission_clause]
+        params = {
+            **permission_params,
+            'offset': offset,
+            'limit': limit,
+        }
+
         if search_term:
-            where_clause = f"WHERE {permission_clause} AND (toLower(o.name) CONTAINS toLower($search_term) OR toLower(o.description) CONTAINS toLower($search_term))"
-            params = {
-                **permission_params,
-                'search_term': search_term,
-                'offset': offset,
-                'limit': limit
-            }
-        else:
-            where_clause = f"WHERE {permission_clause}"
-            params = {
-                **permission_params,
-                'offset': offset,
-                'limit': limit
-            }
+            clauses.append("(toLower(o.name) CONTAINS toLower($search_term) OR toLower(o.description) CONTAINS toLower($search_term))")
+            params['search_term'] = search_term
+
+        if is_public is True:
+            clauses.append("o.is_public = true")
+        elif is_public is False:
+            clauses.append("(o.is_public = false OR o.is_public IS NULL)")
+
+        if recent_only:
+            clauses.append("o.created_at > datetime() - duration({days: 7})")
+
+        where_clause = "WHERE " + " AND ".join(clauses)
 
         # Single combined query: count via subquery + paginated data
         query = f"""

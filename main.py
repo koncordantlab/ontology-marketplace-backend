@@ -133,11 +133,20 @@ async def search_ontologies_endpoint(
     search_term: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    is_public: Optional[bool] = None,
+    recent_only: bool = False,
 ):
     """
     Search for ontologies based on query parameters
     """
-    return await search_ontologies(search_term, limit, offset, request)
+    return await search_ontologies(
+        search_term=search_term,
+        limit=limit,
+        offset=offset,
+        request=request,
+        is_public=is_public,
+        recent_only=recent_only,
+    )
 
 @app.get("/ontology_counts")
 async def ontology_counts_endpoint(request: Request):

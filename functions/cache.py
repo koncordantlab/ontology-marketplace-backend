@@ -69,16 +69,19 @@ def _get_cache():
         return None
 
 
-def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str]) -> str:
+def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str],
+                         is_public: Optional[bool] = None, recent_only: bool = False) -> str:
     """
     Generate a cache key based on search parameters and user context.
-    
+
     Args:
         search_term: Search term (normalized to lowercase, None if empty)
         limit: Maximum number of results
         offset: Pagination offset
         fuid: Firebase UID for user context (affects which ontologies are visible)
-        
+        is_public: Public-only / private-only / both filter
+        recent_only: Last-7-days filter
+
     Returns:
         A unique cache key string
     """
@@ -88,13 +91,15 @@ def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fui
         normalized_search = search_term.strip().lower()
         if not normalized_search:
             normalized_search = None
-    
+
     # Create a dictionary of cache parameters
     cache_params = {
         'search_term': normalized_search,
         'limit': limit,
         'offset': offset,
-        'fuid': fuid  # Include user context for permission-based filtering
+        'fuid': fuid,  # Include user context for permission-based filtering
+        'is_public': is_public,
+        'recent_only': recent_only,
     }
     
     # Convert to JSON string for consistent hashing
@@ -107,24 +112,16 @@ def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fui
     return f"search_ontologies:{key_hash}"
 
 
-def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str]) -> Optional[Any]:
+def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str],
+                       is_public: Optional[bool] = None, recent_only: bool = False) -> Optional[Any]:
     """
     Retrieve a cached result for search_ontologies query.
-    
-    Args:
-        search_term: Search term
-        limit: Maximum number of results
-        offset: Pagination offset
-        fuid: Firebase UID
-        
-    Returns:
-        Cached result if available, None otherwise
     """
     cache = _get_cache()
     if cache is None:
         return None
-    
-    cache_key = _generate_cache_key(search_term, limit, offset, fuid)
+
+    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only)
     
     try:
         if USE_REDIS and isinstance(cache, redis.Redis):
@@ -139,22 +136,16 @@ def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid:
         return None
 
 
-def set_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str], result: Any) -> None:
+def set_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str], result: Any,
+                       is_public: Optional[bool] = None, recent_only: bool = False) -> None:
     """
     Store a result in the cache.
-    
-    Args:
-        search_term: Search term
-        limit: Maximum number of results
-        offset: Pagination offset
-        fuid: Firebase UID
-        result: The result to cache (should be serializable)
     """
     cache = _get_cache()
     if cache is None:
         return
-    
-    cache_key = _generate_cache_key(search_term, limit, offset, fuid)
+
+    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only)
     
     try:
         if USE_REDIS and isinstance(cache, redis.Redis):
@@ -215,6 +206,8 @@ def cache_search_results(func):
         limit = kwargs.get('limit', 100)
         offset = kwargs.get('offset', 0)
         request = kwargs.get('request', None)
+        is_public = kwargs.get('is_public', None)
+        recent_only = kwargs.get('recent_only', False)
 
         # Fallback to positional args if not in kwargs
         if search_term is None and len(args) > 0:
@@ -255,7 +248,7 @@ def cache_search_results(func):
 
         # Try to get from cache
         if CACHE_ENABLED:
-            cached_result = get_cached_result(search_term, limit, offset, fuid)
+            cached_result = get_cached_result(search_term, limit, offset, fuid, is_public, recent_only)
             if cached_result is not None:
                 logger.debug(f"Cache hit for search: term='{search_term}', limit={limit}, offset={offset}, fuid={fuid[:8] + '...' if fuid else 'None'}")
                 # Convert dict back to OntologyResponse if needed
@@ -277,7 +270,7 @@ def cache_search_results(func):
                     cache_data = result.dict()
                 else:
                     cache_data = result
-                set_cached_result(search_term, limit, offset, fuid, cache_data)
+                set_cached_result(search_term, limit, offset, fuid, cache_data, is_public, recent_only)
             except Exception as e:
                 logger.warning(f"Failed to cache result: {e}")
 
