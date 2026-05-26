@@ -65,7 +65,7 @@ async def search_ontologies(
 
         # Build combined data + count query
         if search_term:
-            where_clause = f"WHERE {permission_clause} AND (o.name CONTAINS $search_term OR o.description CONTAINS $search_term)"
+            where_clause = f"WHERE {permission_clause} AND (toLower(o.name) CONTAINS toLower($search_term) OR toLower(o.description) CONTAINS toLower($search_term))"
             params = {
                 **permission_params,
                 'search_term': search_term,
