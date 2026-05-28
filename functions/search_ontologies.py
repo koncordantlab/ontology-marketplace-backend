@@ -20,6 +20,7 @@ async def search_ontologies(
     request: Optional[Request] = None,
     is_public: Optional[bool] = None,
     recent_only: bool = False,
+    deleted_only: bool = False,
 ) -> OntologyResponse:
     """
     Search for ontologies in the database.
@@ -31,6 +32,7 @@ async def search_ontologies(
         request: Optional Flask request object for authentication
         is_public: If True, only public. If False, only private. If None, both.
         recent_only: If True, filter to ontologies created in the last 7 days.
+        deleted_only: If True, only soft-deleted items (the user's own trash).
 
     Returns:
         Tuple of (response_data, status_code, headers)
@@ -68,12 +70,33 @@ async def search_ontologies(
             permission_params = {}
 
         # Build WHERE clause with optional filters
-        clauses = [permission_clause]
-        params = {
-            **permission_params,
-            'offset': offset,
-            'limit': limit,
-        }
+        if deleted_only:
+            # Trash view: only the user's own soft-deleted items. Requires auth.
+            if not fuid:
+                # Unauthenticated requests can never see deleted items.
+                return OntologyResponse(
+                    success=True,
+                    message='Ontologies retrieved successfully',
+                    data={'results': [], 'count': 0, 'total': 0, 'offset': offset, 'limit': limit}
+                )
+            clauses = [
+                "EXISTS((:User {fuid: $fuid})-[:CREATED|CAN_DELETE]->(o))",
+                "o.is_deleted = true",
+            ]
+            params = {
+                'fuid': fuid,
+                'offset': offset,
+                'limit': limit,
+            }
+        else:
+            clauses = [permission_clause]
+            # Exclude soft-deleted ontologies from regular listings
+            clauses.append("(o.is_deleted = false OR o.is_deleted IS NULL)")
+            params = {
+                **permission_params,
+                'offset': offset,
+                'limit': limit,
+            }
 
         if search_term:
             clauses.append("(toLower(o.name) CONTAINS toLower($search_term) OR toLower(o.description) CONTAINS toLower($search_term))")

@@ -68,6 +68,68 @@ async def delete_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyRespo
         )
 
 
+async def purge_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
+    """
+    Permanently delete soft-deleted ontologies. Cascades to comments, replies,
+    tags-relationships, and any reaction relationships/nodes attached to them.
+
+    Only the creator of an ontology can purge it (CAN_DELETE alone is not
+    sufficient — purge is destructive and irreversible).
+    """
+    if not ontology_ids:
+        return OntologyResponse(
+            success=False,
+            message="No ontology IDs provided",
+            data=None
+        )
+
+    try:
+        driver = get_neo4j_driver()
+
+        # Cascade: delete the ontology, its comments (and replies), and any
+        # Reaction nodes attached to those comments. DETACH DELETE removes the
+        # node and all attached relationships in one shot.
+        query = """
+            UNWIND $ontology_ids AS ontology_id
+            MATCH (o:Ontology {uuid: ontology_id, is_deleted: true})
+            MATCH (creator:User {fuid: $fuid})-[:CREATED]->(o)
+            OPTIONAL MATCH (c:Comment)-[:COMMENTED_ON]->(o)
+            OPTIONAL MATCH (reply:Comment)-[:REPLY_TO]->(c)
+            OPTIONAL MATCH (c)<-[:HAS_REACTION]-(r:Reaction)
+            OPTIONAL MATCH (reply)<-[:HAS_REACTION]-(rr:Reaction)
+            DETACH DELETE r, rr, reply, c, o
+            RETURN count(DISTINCT ontology_id) AS purged_count
+        """
+
+        async with driver.session() as session:
+            result = await session.run(query, fuid=fuid, ontology_ids=ontology_ids)
+            record = await result.single()
+            purged_count = record["purged_count"] if record else 0
+
+        if purged_count == 0:
+            return OntologyResponse(
+                success=False,
+                message="No purgeable ontologies found (must be soft-deleted and owned by you)",
+                data={"purged_count": 0}
+            )
+
+        invalidate_search_cache()
+
+        return OntologyResponse(
+            success=True,
+            message=f"Permanently deleted {purged_count} ontologies",
+            data={"purged_count": purged_count}
+        )
+
+    except Exception as e:
+        logging.error(f"Database error during purge: {str(e)}")
+        return OntologyResponse(
+            success=False,
+            message="Failed to purge ontologies",
+            data=None
+        )
+
+
 async def restore_ontologies(fuid: str, ontology_ids: List[str]) -> OntologyResponse:
     """
     Restore soft-deleted ontologies by setting is_deleted = false.

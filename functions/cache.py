@@ -70,7 +70,8 @@ def _get_cache():
 
 
 def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str],
-                         is_public: Optional[bool] = None, recent_only: bool = False) -> str:
+                         is_public: Optional[bool] = None, recent_only: bool = False,
+                         deleted_only: bool = False) -> str:
     """
     Generate a cache key based on search parameters and user context.
 
@@ -100,6 +101,7 @@ def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fui
         'fuid': fuid,  # Include user context for permission-based filtering
         'is_public': is_public,
         'recent_only': recent_only,
+        'deleted_only': deleted_only,
     }
     
     # Convert to JSON string for consistent hashing
@@ -113,7 +115,8 @@ def _generate_cache_key(search_term: Optional[str], limit: int, offset: int, fui
 
 
 def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str],
-                       is_public: Optional[bool] = None, recent_only: bool = False) -> Optional[Any]:
+                       is_public: Optional[bool] = None, recent_only: bool = False,
+                       deleted_only: bool = False) -> Optional[Any]:
     """
     Retrieve a cached result for search_ontologies query.
     """
@@ -121,7 +124,7 @@ def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid:
     if cache is None:
         return None
 
-    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only)
+    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only, deleted_only)
     
     try:
         if USE_REDIS and isinstance(cache, redis.Redis):
@@ -137,7 +140,8 @@ def get_cached_result(search_term: Optional[str], limit: int, offset: int, fuid:
 
 
 def set_cached_result(search_term: Optional[str], limit: int, offset: int, fuid: Optional[str], result: Any,
-                       is_public: Optional[bool] = None, recent_only: bool = False) -> None:
+                       is_public: Optional[bool] = None, recent_only: bool = False,
+                       deleted_only: bool = False) -> None:
     """
     Store a result in the cache.
     """
@@ -145,7 +149,7 @@ def set_cached_result(search_term: Optional[str], limit: int, offset: int, fuid:
     if cache is None:
         return
 
-    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only)
+    cache_key = _generate_cache_key(search_term, limit, offset, fuid, is_public, recent_only, deleted_only)
     
     try:
         if USE_REDIS and isinstance(cache, redis.Redis):
@@ -208,6 +212,7 @@ def cache_search_results(func):
         request = kwargs.get('request', None)
         is_public = kwargs.get('is_public', None)
         recent_only = kwargs.get('recent_only', False)
+        deleted_only = kwargs.get('deleted_only', False)
 
         # Fallback to positional args if not in kwargs
         if search_term is None and len(args) > 0:
@@ -248,7 +253,7 @@ def cache_search_results(func):
 
         # Try to get from cache
         if CACHE_ENABLED:
-            cached_result = get_cached_result(search_term, limit, offset, fuid, is_public, recent_only)
+            cached_result = get_cached_result(search_term, limit, offset, fuid, is_public, recent_only, deleted_only)
             if cached_result is not None:
                 logger.debug(f"Cache hit for search: term='{search_term}', limit={limit}, offset={offset}, fuid={fuid[:8] + '...' if fuid else 'None'}")
                 # Convert dict back to OntologyResponse if needed
@@ -270,7 +275,7 @@ def cache_search_results(func):
                     cache_data = result.dict()
                 else:
                     cache_data = result
-                set_cached_result(search_term, limit, offset, fuid, cache_data, is_public, recent_only)
+                set_cached_result(search_term, limit, offset, fuid, cache_data, is_public, recent_only, deleted_only)
             except Exception as e:
                 logger.warning(f"Failed to cache result: {e}")
 

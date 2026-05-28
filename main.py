@@ -8,7 +8,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from functions.search_ontologies import search_ontologies
 from functions.add_ontologies import add_ontologies
-from functions.delete_ontologies import delete_ontologies
+from functions.delete_ontologies import delete_ontologies, restore_ontologies, purge_ontologies
 from functions.update_ontology import update_ontology
 from functions.model_ontology import UpdateOntology, Ontology, NewOntology, OntologyResponse, UploadOntology
 from functions.auth_utils import initialize_firebase
@@ -135,6 +135,7 @@ async def search_ontologies_endpoint(
     offset: int = 0,
     is_public: Optional[bool] = None,
     recent_only: bool = False,
+    deleted_only: bool = False,
 ):
     """
     Search for ontologies based on query parameters
@@ -146,6 +147,7 @@ async def search_ontologies_endpoint(
         request=request,
         is_public=is_public,
         recent_only=recent_only,
+        deleted_only=deleted_only,
     )
 
 @app.get("/ontology_counts")
@@ -172,13 +174,16 @@ async def ontology_counts_endpoint(request: Request):
         perm = "o.is_public = true"
         params = {}
 
+    not_deleted = "(o.is_deleted = false OR o.is_deleted IS NULL)"
+
     query = f"""
         MATCH (o:Ontology) WHERE {perm}
         RETURN
-          count(o) AS total,
-          count(CASE WHEN o.is_public = true THEN 1 END) AS public_count,
-          count(CASE WHEN o.is_public = false OR o.is_public IS NULL THEN 1 END) AS private_count,
-          count(CASE WHEN o.created_at > datetime() - duration({{days: 7}}) THEN 1 END) AS recent_count
+          count(CASE WHEN {not_deleted} THEN 1 END) AS total,
+          count(CASE WHEN o.is_public = true AND {not_deleted} THEN 1 END) AS public_count,
+          count(CASE WHEN (o.is_public = false OR o.is_public IS NULL) AND {not_deleted} THEN 1 END) AS private_count,
+          count(CASE WHEN o.created_at > datetime() - duration({{days: 7}}) AND {not_deleted} THEN 1 END) AS recent_count,
+          count(CASE WHEN o.is_deleted = true THEN 1 END) AS deleted_count
     """
 
     driver = get_neo4j_driver()
@@ -191,6 +196,7 @@ async def ontology_counts_endpoint(request: Request):
         "public": record["public_count"],
         "private": record["private_count"],
         "recent": record["recent_count"],
+        "deleted": record["deleted_count"],
     }
 
 
@@ -228,11 +234,7 @@ async def delete_ontologies_endpoint(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Delete ontologies by their IDs
-
-    Args:
-        email: String email of the owner/admin/editor of ontologies
-        ontology_ids: List of ontology uuids to delete
+    Soft-delete ontologies by their IDs (sets is_deleted = true).
     """
     try:
         fuid = current_user.get('uid')
@@ -243,6 +245,52 @@ async def delete_ontologies_endpoint(
                 data=None
             )
         return await delete_ontologies(fuid, ontology_ids)
+    except Exception as e:
+        return OntologyResponse(
+            success=False,
+            message=f"Failed to process request: {str(e)}",
+            data=None
+        )
+
+
+@app.post("/restore_ontologies", response_model=OntologyResponse)
+async def restore_ontologies_endpoint(
+    ontology_ids: List[str],
+    current_user: dict = Depends(get_current_user)
+):
+    """Restore soft-deleted ontologies (sets is_deleted = false)."""
+    try:
+        fuid = current_user.get('uid')
+        if not fuid:
+            return OntologyResponse(
+                success=False,
+                message="Missing user ID in authentication token",
+                data=None
+            )
+        return await restore_ontologies(fuid, ontology_ids)
+    except Exception as e:
+        return OntologyResponse(
+            success=False,
+            message=f"Failed to process request: {str(e)}",
+            data=None
+        )
+
+
+@app.delete("/purge_ontologies", response_model=OntologyResponse)
+async def purge_ontologies_endpoint(
+    ontology_ids: List[str],
+    current_user: dict = Depends(get_current_user)
+):
+    """Permanently delete soft-deleted ontologies (creator only, cascades comments/reactions)."""
+    try:
+        fuid = current_user.get('uid')
+        if not fuid:
+            return OntologyResponse(
+                success=False,
+                message="Missing user ID in authentication token",
+                data=None
+            )
+        return await purge_ontologies(fuid, ontology_ids)
     except Exception as e:
         return OntologyResponse(
             success=False,
