@@ -9,12 +9,14 @@ dependencies = [
     "firebase-admin>=6.9.0",
     "functions-framework>=3.8.2",
     "neo4j>=5.28.1",
+    "numpy>=1.26",
     "pydantic>=2.11.4",
     "python-dotenv>=1.1.0",
     "python-jose[cryptography]>=3.5.0",
     "python-multipart>=0.0.9",
     "rdflib>=7.3.0",
     "rdflib-neo4j>=1.1",
+    "sentence-transformers>=3.0",
     "uvicorn>=0.34.2",
 ]
 

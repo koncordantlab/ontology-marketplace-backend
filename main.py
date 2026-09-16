@@ -38,6 +38,7 @@ from functions.model_message import NewMessage, MessageReply
 from functions.activity import get_activity_feed, get_unread_count, mark_read, mark_all_read
 from functions.get_ontology import get_ontology_by_id
 from functions.n4j import close_neo4j_driver
+from functions.recommend import search as recommend_search, semantic_mode_available, get_detail as recommend_get_detail, find_similar as recommend_find_similar
 
 # Load environment variables from .env file
 load_dotenv()
@@ -448,6 +449,93 @@ async def like_ontology_endpoint(
         message="Like functionality to be implemented",
         data={"ontology_id": ontology_id}
     )
+
+@app.get("/recommend", response_model=OntologyResponse)
+async def recommend_endpoint(
+    q: str = "",
+    top: int = 20,
+    mode: str = "keyword",
+):
+    """
+    OMRank keyword/semantic ontology recommendation for a query string.
+    Public endpoint - same ranking logic and data as the standalone OMRank app.
+    """
+    query = q.strip()
+    top = min(50, max(5, top))
+    if mode not in ("keyword", "semantic"):
+        mode = "keyword"
+
+    if not query:
+        return OntologyResponse(
+            success=True,
+            message="Empty query",
+            data={"results": [], "query": query, "mode": mode, "semantic_available": semantic_mode_available()},
+        )
+
+    try:
+        raw = recommend_search(query, top_n=top, mode=mode)
+        results = [{"rank": i, **r} for i, r in enumerate(raw, 1)]
+        return OntologyResponse(
+            success=True,
+            message="Recommendations retrieved successfully",
+            data={"results": results, "query": query, "mode": mode, "semantic_available": semantic_mode_available()},
+        )
+    except Exception as e:
+        logging.error(f"Recommend error: {str(e)}")
+        return OntologyResponse(
+            success=False,
+            message=f"Recommendation error: {str(e)}",
+            data=None,
+        )
+
+@app.get("/recommend/detail/{acronym}", response_model=OntologyResponse)
+async def recommend_detail_endpoint(acronym: str):
+    """
+    Full OMRank detail record for a single ontology by acronym.
+    Same source data as /recommend; public endpoint.
+    """
+    try:
+        detail = recommend_get_detail(acronym)
+        if not detail:
+            return OntologyResponse(
+                success=False,
+                message=f"Ontology '{acronym}' not found",
+                data=None,
+            )
+        return OntologyResponse(
+            success=True,
+            message="Ontology detail retrieved successfully",
+            data=detail,
+        )
+    except Exception as e:
+        logging.error(f"Recommend detail error: {str(e)}")
+        return OntologyResponse(
+            success=False,
+            message=f"Recommend detail error: {str(e)}",
+            data=None,
+        )
+
+@app.get("/recommend/similar/{acronym}", response_model=OntologyResponse)
+async def recommend_similar_endpoint(acronym: str, top: int = 20):
+    """
+    Ontologies most similar to the given acronym (embedding + domain-tag
+    overlap). Same source data as /recommend; public endpoint.
+    """
+    top = min(50, max(5, top))
+    try:
+        results = recommend_find_similar(acronym, top_n=top)
+        return OntologyResponse(
+            success=True,
+            message="Similar ontologies retrieved successfully",
+            data={"acronym": acronym.upper(), "results": results},
+        )
+    except Exception as e:
+        logging.error(f"Recommend similar error: {str(e)}")
+        return OntologyResponse(
+            success=False,
+            message=f"Recommend similar error: {str(e)}",
+            data=None,
+        )
 
 @app.get("/get_tags", response_model=List[str])
 async def get_tags_endpoint():

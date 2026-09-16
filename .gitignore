@@ -44,6 +44,9 @@ ENV/
 instance/
 .webassets-cache
 
+# OMRank data (large binary db + embeddings, not committed)
+data/omrank/
+
 # Jupyter
 .ipynb_checkpoints
 
