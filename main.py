@@ -456,11 +456,13 @@ async def recommend_endpoint(
     top: int = 20,
     mode: str = "keyword",
     platform: str = "all",
+    preset: str = "default",
 ):
     """
     OMRank keyword/semantic ontology recommendation for a query string.
     Public endpoint - same ranking logic and data as the standalone OMRank app.
     platform: "all" | "bioportal" | "proto-okn"
+    preset: "default" (balanced weights) | "discovery" (relevance-boosted)
     """
     query = q.strip()
     top = min(100, max(5, top))
@@ -468,21 +470,23 @@ async def recommend_endpoint(
         mode = "keyword"
     if platform not in ("all", "bioportal", "proto-okn"):
         platform = "all"
+    if preset not in ("default", "discovery"):
+        preset = "default"
 
     if not query:
         return OntologyResponse(
             success=True,
             message="Empty query",
-            data={"results": [], "query": query, "mode": mode, "platform": platform, "semantic_available": semantic_mode_available()},
+            data={"results": [], "query": query, "mode": mode, "platform": platform, "preset": preset, "semantic_available": semantic_mode_available()},
         )
 
     try:
-        raw = recommend_search(query, top_n=top, mode=mode, platform=platform)
+        raw = recommend_search(query, top_n=top, mode=mode, platform=platform, preset=preset)
         results = [{"rank": i, **r} for i, r in enumerate(raw, 1)]
         return OntologyResponse(
             success=True,
             message="Recommendations retrieved successfully",
-            data={"results": results, "query": query, "mode": mode, "platform": platform, "semantic_available": semantic_mode_available()},
+            data={"results": results, "query": query, "mode": mode, "platform": platform, "preset": preset, "semantic_available": semantic_mode_available()},
         )
     except Exception as e:
         logging.error(f"Recommend error: {str(e)}")

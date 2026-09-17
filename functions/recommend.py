@@ -25,7 +25,20 @@ def _omrank_db_path() -> Path:
 
 PROFILE = "proto-okn-default@1.0"
 
-# Discovery profile weights: raise Relevance to 0.35, rescale rest to 0.65
+# Balanced weights across all 9 dimensions
+DEFAULT_WEIGHTS = {
+    "relevance":   0.20,
+    "semantic":    0.15,
+    "structural":  0.05,
+    "fair":        0.10,
+    "interop":     0.15,
+    "adoption":    0.05,
+    "governance":  0.15,
+    "maintenance": 0.10,
+    "intl":        0.05,
+}
+
+# Discovery preset: raises Relevance to 0.35, surfaces niche/KG ontologies
 DISCOVERY_WEIGHTS = {
     "relevance":   0.35,
     "semantic":    0.12,
@@ -36,6 +49,11 @@ DISCOVERY_WEIGHTS = {
     "governance":  0.12,
     "maintenance": 0.08,
     "intl":        0.05,
+}
+
+PRESETS = {
+    "default":   DEFAULT_WEIGHTS,
+    "discovery": DISCOVERY_WEIGHTS,
 }
 
 
@@ -223,11 +241,12 @@ SOURCE_LABEL = {"owl+metadata": "OWL Parsed", "metadata_only": "Metadata Only", 
 
 
 def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "keyword",
-           platform: str = "all") -> list:
+           platform: str = "all", preset: str = "default") -> list:
     """
     mode: "keyword" - token-only Cterm (fast, exact match)
           "semantic" - blend token + embedding cosine in Cterm
     platform: "all" | "bioportal" | "proto-okn"
+    preset: "default" (balanced) | "discovery" (relevance-boosted)
     """
     con = get_db()
 
@@ -298,8 +317,9 @@ def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "key
             "intl":        row["conf_intl"]        or 0.0,
         }
 
-        final_score = sum(DISCOVERY_WEIGHTS[d] * dim_scores[d] for d in DISCOVERY_WEIGHTS)
-        final_conf = sum(DISCOVERY_WEIGHTS[d] * dim_confs[d] for d in DISCOVERY_WEIGHTS)
+        weights = PRESETS.get(preset, DEFAULT_WEIGHTS)
+        final_score = sum(weights[d] * dim_scores[d] for d in weights)
+        final_conf = sum(weights[d] * dim_confs[d] for d in weights)
 
         data_source = row["data_source"] or "no_file"
         results.append({
