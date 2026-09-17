@@ -25,21 +25,8 @@ def _omrank_db_path() -> Path:
 
 PROFILE = "proto-okn-default@1.0"
 
-# Balanced weights across all 9 dimensions
+# Default preset: matches OMRank Flask UI "Default" — relevance at 0.35
 DEFAULT_WEIGHTS = {
-    "relevance":   0.20,
-    "semantic":    0.15,
-    "structural":  0.05,
-    "fair":        0.10,
-    "interop":     0.15,
-    "adoption":    0.05,
-    "governance":  0.15,
-    "maintenance": 0.10,
-    "intl":        0.05,
-}
-
-# Discovery preset: raises Relevance to 0.35, surfaces niche/KG ontologies
-DISCOVERY_WEIGHTS = {
     "relevance":   0.35,
     "semantic":    0.12,
     "structural":  0.04,
@@ -49,6 +36,20 @@ DISCOVERY_WEIGHTS = {
     "governance":  0.12,
     "maintenance": 0.08,
     "intl":        0.05,
+}
+
+# Discovery preset: matches OMRank Flask UI "Discovery" — relevance boosted to 0.55
+# Surfaces KGs and niche ontologies that closely match the query
+DISCOVERY_WEIGHTS = {
+    "relevance":   0.55,
+    "semantic":    0.05,
+    "structural":  0.02,
+    "fair":        0.05,
+    "interop":     0.08,
+    "adoption":    0.05,
+    "governance":  0.10,
+    "maintenance": 0.08,
+    "intl":        0.02,
 }
 
 PRESETS = {
