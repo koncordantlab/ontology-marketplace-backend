@@ -455,30 +455,34 @@ async def recommend_endpoint(
     q: str = "",
     top: int = 20,
     mode: str = "keyword",
+    platform: str = "all",
 ):
     """
     OMRank keyword/semantic ontology recommendation for a query string.
     Public endpoint - same ranking logic and data as the standalone OMRank app.
+    platform: "all" | "bioportal" | "proto-okn"
     """
     query = q.strip()
-    top = min(50, max(5, top))
+    top = min(100, max(5, top))
     if mode not in ("keyword", "semantic"):
         mode = "keyword"
+    if platform not in ("all", "bioportal", "proto-okn"):
+        platform = "all"
 
     if not query:
         return OntologyResponse(
             success=True,
             message="Empty query",
-            data={"results": [], "query": query, "mode": mode, "semantic_available": semantic_mode_available()},
+            data={"results": [], "query": query, "mode": mode, "platform": platform, "semantic_available": semantic_mode_available()},
         )
 
     try:
-        raw = recommend_search(query, top_n=top, mode=mode)
+        raw = recommend_search(query, top_n=top, mode=mode, platform=platform)
         results = [{"rank": i, **r} for i, r in enumerate(raw, 1)]
         return OntologyResponse(
             success=True,
             message="Recommendations retrieved successfully",
-            data={"results": results, "query": query, "mode": mode, "semantic_available": semantic_mode_available()},
+            data={"results": results, "query": query, "mode": mode, "platform": platform, "semantic_available": semantic_mode_available()},
         )
     except Exception as e:
         logging.error(f"Recommend error: {str(e)}")

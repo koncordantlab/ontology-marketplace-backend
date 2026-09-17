@@ -14,8 +14,14 @@ from functools import lru_cache
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).parent.parent
-OMRANK_DATA_DIR = Path(os.environ.get("OMRANK_DATA_DIR", str(BACKEND_ROOT / "data" / "omrank")))
-OMRANK_DB_PATH = Path(os.environ.get("OMRANK_DB_PATH", str(OMRANK_DATA_DIR / "omrank.db")))
+
+
+def _omrank_data_dir() -> Path:
+    return Path(os.environ.get("OMRANK_DATA_DIR", str(BACKEND_ROOT / "data" / "omrank")))
+
+
+def _omrank_db_path() -> Path:
+    return Path(os.environ.get("OMRANK_DB_PATH", str(_omrank_data_dir() / "omrank.db")))
 
 PROFILE = "proto-okn-default@1.0"
 
@@ -34,7 +40,7 @@ DISCOVERY_WEIGHTS = {
 
 
 def get_db() -> sqlite3.Connection:
-    con = sqlite3.connect(str(OMRANK_DB_PATH), check_same_thread=False)
+    con = sqlite3.connect(str(_omrank_db_path()), check_same_thread=False)
     con.row_factory = sqlite3.Row
     return con
 
@@ -46,8 +52,8 @@ def _load_embeddings():
     """Load pre-built ontology embeddings once at startup."""
     try:
         import numpy as np
-        emb = np.load(OMRANK_DATA_DIR / "onto_embeddings.npy")   # (N, 384) unit-normalised
-        with open(OMRANK_DATA_DIR / "onto_index.json") as f:
+        emb = np.load(_omrank_data_dir() / "onto_embeddings.npy")   # (N, 384) unit-normalised
+        with open(_omrank_data_dir() / "onto_index.json") as f:
             index = json.load(f)
         acr2row = {e["acronym"]: i for i, e in enumerate(index)}
         return emb, acr2row
@@ -216,15 +222,23 @@ def compute_relevance(query, acronym, onto_name, onto_desc, domain_tags,
 SOURCE_LABEL = {"owl+metadata": "OWL Parsed", "metadata_only": "Metadata Only", "no_file": "No File"}
 
 
-def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "keyword") -> list:
+def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "keyword",
+           platform: str = "all") -> list:
     """
     mode: "keyword" - token-only Cterm (fast, exact match)
           "semantic" - blend token + embedding cosine in Cterm
+    platform: "all" | "bioportal" | "proto-okn"
     """
     con = get_db()
 
+    platform_clause = ""
+    if platform == "proto-okn":
+        platform_clause = "AND v.acronym LIKE 'OKN-%'"
+    elif platform == "bioportal":
+        platform_clause = "AND v.acronym NOT LIKE 'OKN-%'"
+
     rows = con.execute(
-        """SELECT v.id AS version_id, v.acronym, v.release_date,
+        f"""SELECT v.id AS version_id, v.acronym, v.release_date,
                   o.name, o.description, o.domain_tags,
                   s.class_count,
                   d.dim_semantic, d.dim_structural, d.dim_fair, d.dim_interop,
@@ -236,7 +250,7 @@ def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "key
            JOIN ontology o ON o.acronym = v.acronym
            LEFT JOIN owl_stats s ON s.version_id = v.id
            LEFT JOIN dimension_score d ON d.version_id = v.id AND d.profile = ?
-           WHERE v.is_latest = 1""",
+           WHERE v.is_latest = 1 {platform_clause}""",
         (profile,),
     ).fetchall()
 
@@ -313,18 +327,23 @@ def search(query: str, top_n: int = 20, profile: str = PROFILE, mode: str = "key
     return results[:top_n]
 
 
-@lru_cache(maxsize=1)
+_similarity_cache = None
+
 def _load_similarity_data():
     """Load embeddings + index + domain-tag profiles once, for find_similar()."""
+    global _similarity_cache
+    if _similarity_cache is not None:
+        return _similarity_cache
     try:
         import numpy as np
-        emb = np.load(OMRANK_DATA_DIR / "onto_embeddings.npy")
-        with open(OMRANK_DATA_DIR / "onto_index.json") as f:
+        emb = np.load(_omrank_data_dir() / "onto_embeddings.npy")
+        with open(_omrank_data_dir() / "onto_index.json") as f:
             index = json.load(f)
-        with open(OMRANK_DATA_DIR / "onto_profiles.json") as f:
+        with open(_omrank_data_dir() / "onto_profiles.json") as f:
             profiles = json.load(f)
         acr2row = {e["acronym"]: i for i, e in enumerate(index)}
-        return emb, index, profiles, acr2row
+        _similarity_cache = (emb, index, profiles, acr2row)
+        return _similarity_cache
     except Exception:
         return None, None, None, None
 
